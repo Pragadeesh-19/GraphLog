@@ -16,6 +16,7 @@ public class CausalLedger {
     private final Map<String, EventAtom> eventStoreById = new ConcurrentHashMap<>();
     private final Map<String, Integer> eventIdToGraphId = new ConcurrentHashMap<>();
     private final Map<Integer, String> graphIdToEventId = new ConcurrentHashMap<>();
+    private final Map<Integer, List<Integer>> childrenAdjacencyList = new ConcurrentHashMap<>();
     private final Graph causalGraph;
 
     private final String logFilePath;
@@ -102,6 +103,10 @@ public class CausalLedger {
             for (String parentId : causalParentEventIds) {
                 int parentGraphId = eventIdToGraphId.get(parentId);
                 causalGraph.addDirectedEdge(newGraphNodeId, parentGraphId);
+
+                this.childrenAdjacencyList
+                        .computeIfAbsent(parentGraphId, k -> new ArrayList<>())
+                        .add(newGraphNodeId);
             }
 
             EventAtom newEvent = new EventAtom(entityId, eventType, payload, causalParentEventIds);
@@ -173,6 +178,10 @@ public class CausalLedger {
                                             ". This suggests log corruption or events were not written in causal order.", null);
                         }
                         causalGraph.addDirectedEdge(graphNodeId, parentGraphId);
+
+                        this.childrenAdjacencyList
+                                .computeIfAbsent(parentGraphId, k -> new ArrayList<>())
+                                .add(graphNodeId); // parentGraphId (Cause) now has loadedEvent (graphNodeId, Effect) as a child
                     }
 
                 } catch (Exception e) {
@@ -185,6 +194,127 @@ public class CausalLedger {
 
         } catch (IOException e) {
             throw new PersistenceException("Failed to read log file: " + logFilePath, e);
+        }
+    }
+
+    private static List<Integer> bfsShortestPath(int startNode, int endNode, int numTotalGraphNodes, Map<Integer, List<Integer>> adjacencyList) {
+        if (startNode < 0 || startNode >= numTotalGraphNodes || endNode < 0 || endNode >= numTotalGraphNodes) {
+            System.err.println("Error in bfsShortestPath: Start or end node out of bounds");
+            return Collections.emptyList();
+        }
+
+        if (startNode == endNode) {
+            return List.of(startNode);
+        }
+
+        Queue<Integer> queue = new LinkedList<>();
+        Map<Integer, Integer> prev = new HashMap<>();
+        boolean[] visited = new boolean[numTotalGraphNodes];
+
+        queue.offer(startNode);
+        visited[startNode] = true;
+
+        while (!queue.isEmpty()) {
+            int u = queue.poll();
+
+            List<Integer> neighbours = adjacencyList.getOrDefault(u, Collections.emptyList());
+
+            for (int v : neighbours) {
+                if (!visited[v]) {
+                    visited[v] = true;
+                    prev.put(v, u); // Record that u is the predecessor of v in the path from startNode
+                    queue.offer(v);
+
+                    if (v == endNode) {
+                        LinkedList<Integer> path = new LinkedList<>();
+                        Integer current = endNode;
+                        while (current != null) {
+                            path.addFirst(current);
+                            if (current.equals(startNode)) break;
+                            current = prev.get(current);
+                            if (current == null && !path.contains(startNode) && !path.getFirst().equals(startNode)) {
+                                System.err.println("Error reconstructing path: predecessor not found before reaching start node.");
+                                return Collections.emptyList();
+                            }
+                        }
+                        return path;
+                    }
+                }
+            }
+        }
+        return Collections.emptyList();
+    }
+
+    public List<String> getShortestCausalPath(String startEventId, String endEventId) {
+        rwLock.readLock().lock();
+        try {
+            Integer startGraphId = eventIdToGraphId.get(startEventId);
+            Integer endGraphId = eventIdToGraphId.get(endEventId);
+
+            if (startGraphId == null || endGraphId == null) {
+                System.err.println("Error in getShortestCausalPath: Start or end event id not found");
+                return Collections.emptyList();
+            }
+
+            List<Integer> shortestPathGraphIds = bfsShortestPath(
+                    startGraphId,
+                    endGraphId,
+                    causalGraph.getNumVertices(),
+                    this.childrenAdjacencyList
+            );
+
+            if (shortestPathGraphIds.isEmpty()) {
+                return Collections.emptyList();
+            }
+
+            List<String> resultEventIds = new ArrayList<>(shortestPathGraphIds.size());
+            for (int graphId : shortestPathGraphIds) {
+                String pathEventId = graphIdToEventId.get(graphId);
+                if (pathEventId != null) {
+                    resultEventIds.add(pathEventId);
+                } else {
+                    System.err.println("Error in getShortestCausalPath: Graph Id to event id mapping inconsistent for " + graphId);
+                }
+            }
+            return resultEventIds;
+        } finally {
+            rwLock.readLock().unlock();
+        }
+    }
+
+    public List<String> getAllCommonCausalAncestors(String eventId1, String eventId2) {
+        rwLock.readLock().lock();
+        try {
+            Integer graphId1 = eventIdToGraphId.get(eventId1);
+            Integer graphId2 = eventIdToGraphId.get(eventId2);
+
+            if (graphId1 == null || graphId2 == null) {
+                if (graphId1 == null) System.err.println("Event ID not found for common ancestor query: " + eventId1);
+                if (graphId2 == null) System.err.println("Event ID not found for common ancestor query: " + eventId2);
+                return Collections.emptyList();
+            }
+
+            Set<Integer> ancestorGraphIds1 = causalGraph.getReachableVertices(graphId1);
+            Set<Integer> ancestorGraphIds2 = causalGraph.getReachableVertices(graphId2);
+
+            Set<Integer> commonAncestorsGraphIds = new HashSet<>(ancestorGraphIds1);
+            commonAncestorsGraphIds.retainAll(ancestorGraphIds2);
+            if (commonAncestorsGraphIds.isEmpty()) {
+                return Collections.emptyList();
+            }
+
+            List<String> commonAncestorsEventIds = new ArrayList<>(commonAncestorsGraphIds.size());
+            for (Integer commonGraphId : commonAncestorsGraphIds) {
+                String commonEventId = graphIdToEventId.get(commonGraphId);
+                if (commonEventId != null) {
+                    commonAncestorsEventIds.add(commonEventId);
+                } else {
+                    System.err.println("Error in getAllCommonCausalAncestors: graph id to event id mapping inconsistent for " + commonGraphId);
+                }
+            }
+            return commonAncestorsEventIds;
+        } finally {
+            rwLock.readLock().unlock();
         }
     }
 
@@ -216,6 +346,49 @@ public class CausalLedger {
             }
 
             return result;
+        } finally {
+            rwLock.readLock().unlock();
+        }
+    }
+
+    public List<String> getEventAndCausalDescendantsId(String eventId) {
+        rwLock.readLock().lock();
+        try {
+            Integer startNodeGraphId = eventIdToGraphId.get(eventId);
+            if (startNodeGraphId == null) {
+                // Event ID not found, return empty list
+                System.err.println("Event ID not found for descendant query: " + eventId);
+                return Collections.emptyList();
+            }
+
+            Set<Integer> reachableDescendantsGraphIds = new HashSet<>();
+            Deque<Integer> stack = new ArrayDeque<>();
+
+            stack.push(startNodeGraphId);
+
+            while (!stack.isEmpty()) {
+                int currentGraphId = stack.pop();
+
+                reachableDescendantsGraphIds.add(currentGraphId);
+
+                List<Integer> children = this.childrenAdjacencyList.getOrDefault(currentGraphId, Collections.emptyList());
+                for (int childGraphId : children) {
+                    if (!reachableDescendantsGraphIds.contains(childGraphId)) {
+                        stack.push(childGraphId);
+                    }
+                }
+            }
+
+            // Convert Set<Integer> of graph IDs back to List<String> of event IDs
+            List<String> resultEventIds = new ArrayList<>(reachableDescendantsGraphIds.size());
+            for (int graphId : reachableDescendantsGraphIds) {
+                String descEventId = graphIdToEventId.get(graphId);
+                if (descEventId != null) {
+                    resultEventIds.add(descEventId);
+                }
+            }
+            return resultEventIds;
+
         } finally {
             rwLock.readLock().unlock();
         }

@@ -42,12 +42,12 @@ public class Graph {
 
     public int addNode() {
         if (numVertices == capacity) {
-            growVertices();
+            growCapacity();
         }
         return numVertices++;
     }
 
-    private void growVertices() {
+    private void growCapacity() {
         int newCapacity = capacity * 2;
         List<List<Integer>> newAdj = new ArrayList<>(newCapacity);
         newAdj.addAll(adj);
