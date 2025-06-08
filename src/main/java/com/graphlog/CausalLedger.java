@@ -19,6 +19,8 @@ public class CausalLedger {
     private final Map<Integer, List<Integer>> childrenAdjacencyList = new ConcurrentHashMap<>();
     private final Graph causalGraph;
 
+    private final Map<String, StateUpdater<Map<String, Object>>> stateUpdater = new ConcurrentHashMap<>();
+
     private final String logFilePath;
     private final ReentrantReadWriteLock rwLock = new ReentrantReadWriteLock();
 
@@ -58,6 +60,8 @@ public class CausalLedger {
             }
         }
 
+        registerDefaultStateUpdaters();
+
         loadEventsFromLog();
 
         System.out.println("CausalLedger initialized: " + getStats());
@@ -65,6 +69,248 @@ public class CausalLedger {
 
     public CausalLedger(String logFilePath) {
         this(logFilePath, 1000);
+    }
+
+    private void registerDefaultStateUpdaters() {
+        stateUpdater.put("USER_CREATED", ((currentState, eventPayload, eventType) -> {
+            Map<String, Object> newState = new HashMap<>();
+            newState.put("userId", eventPayload.get("userId"));
+            newState.put("username", eventPayload.get("username"));
+            newState.put("isActive", true);
+            newState.put("version", 1);
+            newState.put("createdAt", eventPayload.get("timestamp"));
+            System.out.println("Applying USER_CREATED: " + eventPayload + " -> " + newState);
+            return newState;
+        }));
+
+        stateUpdater.put("USER_RENAMED", (currentState, payload, type) -> {
+            Map<String, Object> newState = new HashMap<>(currentState);
+            newState.put("username", payload.get("newUsername"));
+            newState.put("version", (Integer) currentState.getOrDefault("version", 0) + 1);
+            newState.put("lastModified", payload.get("timestamp"));
+            System.out.println("Applying USER_RENAMED: " + payload + " to " + currentState + " -> " + newState);
+            return newState;
+        });
+
+        stateUpdater.put("USER_DEACTIVATED", (currentState, payload, type) -> {
+            Map<String, Object> newState = new HashMap<>(currentState);
+            newState.put("isActive", false);
+            newState.put("deactivationReason", payload.get("reason"));
+            newState.put("version", (Integer) currentState.getOrDefault("version", 0) + 1);
+            newState.put("deactivatedAt", payload.get("timestamp"));
+            System.out.println("Applying USER_DEACTIVATED: " + payload + " to " + currentState + " -> " + newState);
+            return newState;
+        });
+
+        stateUpdater.put("USER_REACTIVATED", (currentState, payload, type) -> {
+            Map<String, Object> newState = new HashMap<>(currentState);
+            newState.put("isActive", true);
+            newState.remove("deactivationReason");
+            newState.remove("deactivatedAt");
+            newState.put("version", (Integer) currentState.getOrDefault("version", 0) + 1);
+            newState.put("reactivatedAt", payload.get("timestamp"));
+            System.out.println("Applying USER_REACTIVATED: " + payload + " to " + currentState + " -> " + newState);
+            return newState;
+        });
+
+        stateUpdater.put("PRODUCT_ADDED", (currentState, payload, type) -> {
+            Map<String, Object> newState = new HashMap<>();
+            newState.put("productId", payload.get("productId"));
+            newState.put("productName", payload.get("productName"));
+            newState.put("price", payload.get("price"));
+            newState.put("stock", payload.getOrDefault("stock", 0));
+            newState.put("version", 1);
+            newState.put("createdAt", payload.get("timestamp"));
+            System.out.println("Applying PRODUCT_ADDED: " + payload + " -> " + newState);
+            return newState;
+        });
+
+        stateUpdater.put("PRODUCT_UPDATED", (currentState, payload, type) -> {
+            Map<String, Object> newState = new HashMap<>(currentState);
+            if (payload.containsKey("productName")) {
+                newState.put("productName", payload.get("productName"));
+            }
+            if (payload.containsKey("price")) {
+                newState.put("price", payload.get("price"));
+            }
+            newState.put("version", (Integer) currentState.getOrDefault("version", 0) + 1);
+            newState.put("lastModified", payload.get("timestamp"));
+            System.out.println("Applying PRODUCT_UPDATED: " + payload + " to " + currentState + " -> " + newState);
+            return newState;
+        });
+
+        stateUpdater.put("STOCK_INCREMENTED", (currentState, payload, type) -> {
+            Map<String, Object> newState = new HashMap<>(currentState);
+            int currentStock = (Integer) currentState.getOrDefault("stock", 0);
+            int amountIncremented = (Integer) payload.getOrDefault("amount", 0);
+            newState.put("stock", currentStock + amountIncremented);
+            newState.put("version", (Integer) currentState.getOrDefault("version", 0) + 1);
+            newState.put("lastStockUpdate", payload.get("timestamp"));
+            System.out.println("Applying STOCK_INCREMENTED: " + payload + " to " + currentState + " -> " + newState);
+            return newState;
+        });
+
+        stateUpdater.put("STOCK_DECREMENTED", (currentState, payload, type) -> {
+            Map<String, Object> newState = new HashMap<>(currentState);
+            int currentStock = (Integer) currentState.getOrDefault("stock", 0);
+            int amountDecremented = (Integer) payload.getOrDefault("amount", 0);
+            newState.put("stock", Math.max(0, currentStock - amountDecremented)); // Prevent negative stock
+            newState.put("version", (Integer) currentState.getOrDefault("version", 0) + 1);
+            newState.put("lastStockUpdate", payload.get("timestamp"));
+            System.out.println("Applying STOCK_DECREMENTED: " + payload + " to " + currentState + " -> " + newState);
+            return newState;
+        });
+
+        // Order Service event handlers
+        stateUpdater.put("ORDER_CREATED", (currentState, payload, type) -> {
+            Map<String, Object> newState = new HashMap<>();
+            newState.put("orderId", payload.get("orderId"));
+            newState.put("userId", payload.get("userId"));
+            newState.put("status", "CREATED");
+            newState.put("items", payload.get("items"));
+            newState.put("totalAmount", payload.get("totalAmount"));
+            newState.put("version", 1);
+            newState.put("createdAt", payload.get("timestamp"));
+            System.out.println("Applying ORDER_CREATED: " + payload + " -> " + newState);
+            return newState;
+        });
+
+        stateUpdater.put("ORDER_CONFIRMED", (currentState, payload, type) -> {
+            Map<String, Object> newState = new HashMap<>(currentState);
+            newState.put("status", "CONFIRMED");
+            newState.put("version", (Integer) currentState.getOrDefault("version", 0) + 1);
+            newState.put("confirmedAt", payload.get("timestamp"));
+            System.out.println("Applying ORDER_CONFIRMED: " + payload + " to " + currentState + " -> " + newState);
+            return newState;
+        });
+
+        stateUpdater.put("ORDER_SHIPPED", (currentState, payload, type) -> {
+            Map<String, Object> newState = new HashMap<>(currentState);
+            newState.put("status", "SHIPPED");
+            newState.put("trackingNumber", payload.get("trackingNumber"));
+            newState.put("version", (Integer) currentState.getOrDefault("version", 0) + 1);
+            newState.put("shippedAt", payload.get("timestamp"));
+            System.out.println("Applying ORDER_SHIPPED: " + payload + " to " + currentState + " -> " + newState);
+            return newState;
+        });
+
+        stateUpdater.put("ORDER_CANCELLED", (currentState, payload, type) -> {
+            Map<String, Object> newState = new HashMap<>(currentState);
+            newState.put("status", "CANCELLED");
+            newState.put("cancellationReason", payload.get("reason"));
+            newState.put("version", (Integer) currentState.getOrDefault("version", 0) + 1);
+            newState.put("cancelledAt", payload.get("timestamp"));
+            System.out.println("Applying ORDER_CANCELLED: " + payload + " to " + currentState + " -> " + newState);
+            return newState;
+        });
+    }
+
+    public void registerStateUpdater(String eventType, StateUpdater<Map<String, Object>> updater) {
+        stateUpdater.put(eventType, updater);
+        System.out.println("Registered state updater for event type: " + eventType);
+    }
+
+    public Map<String, Object> getCurrentStateForEntity(String entityId) {
+        rwLock.readLock().lock();
+        try {
+            List<String> allEventIdsInTopoOrder = getEventsInTopologicalOrder();
+            if (allEventIdsInTopoOrder.isEmpty()) {
+                System.err.println("No events in ledger to project state for entity: " + entityId);
+                return Collections.emptyMap();
+            }
+
+            List<EventAtom> entityEventsInCausalOrder = new ArrayList<>();
+            for (String eventId : allEventIdsInTopoOrder) {
+                EventAtom event = eventStoreById.get(eventId);
+                if (event != null && entityId.equals(event.getEntityId())) {
+                    entityEventsInCausalOrder.add(event);
+                }
+            }
+
+            if (entityEventsInCausalOrder.isEmpty()) {
+                System.err.println("No events found for entity: " + entityId);
+                return Collections.emptyMap();
+            }
+
+            System.out.println("\nProjecting state for entity: " + entityId +
+                    " using " + entityEventsInCausalOrder.size() + " events in causal order.");
+
+            Map<String, Object> currentState = new HashMap<>();
+
+            for (EventAtom event : entityEventsInCausalOrder) {
+                System.out.println("  Replaying event: " + event.getEventType() + " (ID: " + event.getEventId() + ")");
+
+                StateUpdater<Map<String, Object>> updater = stateUpdater.get(event.getEventType());
+                if (updater != null) {
+                    try {
+                        currentState = updater.apply(currentState, event.getPayload(), event.getEventType());
+                    } catch (Exception e) {
+                        System.err.println("    Error applying state updater for event type: " +
+                                event.getEventType() + " - " + e.getMessage());
+                    }
+                } else {
+                    System.err.println("    No state updater registered for event type: " +
+                            event.getEventType() + " - Skipping event.");
+                }
+            }
+
+            System.out.println("Final projected state for entity " + entityId + ": " + currentState);
+            return Collections.unmodifiableMap(currentState);
+
+        } finally {
+            rwLock.readLock().unlock();
+        }
+    }
+
+    public Map<String, Object> getEntityStateUpToEvent(String entityId, String upToEventId) {
+        rwLock.readLock().lock();
+        try {
+            List<String> allEventIdsInTopoOrder = getEventsInTopologicalOrder();
+            if (allEventIdsInTopoOrder.isEmpty()) {
+                return Collections.emptyMap();
+            }
+
+            int stopIndex = allEventIdsInTopoOrder.indexOf(upToEventId);
+            if (stopIndex == -1) {
+                System.err.println("Target event not found: " + upToEventId);
+                return Collections.emptyMap();
+            }
+
+            List<EventAtom> entityEventsInCausalOrder = new ArrayList<>();
+            for (int i = 0; i <= stopIndex; i++) {
+                String eventId = allEventIdsInTopoOrder.get(i);
+                EventAtom event = eventStoreById.get(eventId);
+                if (event != null && entityId.equals(event.getEntityId())) {
+                    entityEventsInCausalOrder.add(event);
+                }
+            }
+
+            if (entityEventsInCausalOrder.isEmpty()) {
+                return Collections.emptyMap();
+            }
+
+            System.out.println("\nProjecting historical state for entity: " + entityId +
+                    " up to event: " + upToEventId);
+
+            Map<String, Object> currentState = new HashMap<>();
+
+            for (EventAtom event : entityEventsInCausalOrder) {
+                StateUpdater<Map<String, Object>> updater = stateUpdater.get(event.getEventType());
+                if (updater != null) {
+                    try {
+                        currentState = updater.apply(currentState, event.getPayload(), event.getEventType());
+                    } catch (Exception e) {
+                        System.err.println("Error applying state updater for event type: " +
+                                event.getEventType() + " - " + e.getMessage());
+                    }
+                }
+            }
+
+            return Collections.unmodifiableMap(currentState);
+
+        } finally {
+            rwLock.readLock().unlock();
+        }
     }
 
     public String ingestEvent(String entityId, String eventType,
@@ -313,6 +559,76 @@ public class CausalLedger {
                 }
             }
             return commonAncestorsEventIds;
+        } finally {
+            rwLock.readLock().unlock();
+        }
+    }
+
+    public List<String> getNearestCommonCausalAncestors(String eventId1, String eventId2) {
+        rwLock.readLock().lock();
+        try {
+            Integer graphId1 = eventIdToGraphId.get(eventId1);
+            Integer graphId2 = eventIdToGraphId.get(eventId2);
+
+            if (graphId1 == null || graphId2 == null) {
+                if (graphId1 == null) System.err.println("Event ID not found for nearest common ancestor query: " + eventId1);
+                if (graphId2 == null) System.err.println("Event ID not found for nearest common ancestor query: " + eventId2);
+                return Collections.emptyList();
+            }
+
+            Set<Integer> ancestors1 = causalGraph.getReachableVertices(graphId1);
+            Set<Integer> ancestors2 = causalGraph.getReachableVertices(graphId2);
+
+            Set<Integer> commonAncestorsGraphIds = new HashSet<>(ancestors1);
+            commonAncestorsGraphIds.retainAll(ancestors2);
+
+            if (commonAncestorsGraphIds.isEmpty()) {
+                return Collections.emptyList();
+            }
+
+            if (commonAncestorsGraphIds.size() == 1) {
+                String singleCommonAncestorEventId = graphIdToEventId.get(commonAncestorsGraphIds.iterator().next());
+                return (singleCommonAncestorEventId != null) ? List.of(singleCommonAncestorEventId) : Collections.emptyList();
+            }
+
+            // A common ancestor 'A' is "nearest" if no other common ancestor 'B'
+            // is a descendant of 'A' (in our Effect->Cause graph, means A is an ancestor of B).
+            Set<Integer> nearestCommonAncestorsGraphIds = new HashSet<>();
+            for (Integer candidateAncestor : commonAncestorsGraphIds) {
+                boolean isNearest = true;
+                // Check if any other common ancestor is a "more direct" cause of our events
+                // than 'candidateAncestor'. This means, is any other common ancestor a
+                // descendant of 'candidateAncestor' in the Effect->Cause graph
+                // (i.e., 'candidateAncestor' is an ancestor of that other common ancestor).
+                for (Integer otherCommonAncestor : commonAncestorsGraphIds) {
+                    if (candidateAncestor.equals(otherCommonAncestor)) {
+                        continue; // Don't compare with itself
+                    }
+                    // Is 'candidateAncestor' an ancestor of 'otherCommonAncestor'?
+                    // To check this, get all ancestors of 'otherCommonAncestor'.
+                    // If 'candidateAncestor' is in that set, then 'otherCommonAncestor' is "below"
+                    // 'candidateAncestor' in the causal chain towards the original E1/E2, making 'candidateAncestor' not nearest.
+                    if (causalGraph.getReachableVertices(otherCommonAncestor).contains(candidateAncestor)) {
+                        isNearest = false;
+                        break;
+                    }
+                }
+                if (isNearest) {
+                    nearestCommonAncestorsGraphIds.add(candidateAncestor);
+                }
+            }
+
+            List<String> resultEventIds = new ArrayList<>(nearestCommonAncestorsGraphIds.size());
+            for (int graphId : nearestCommonAncestorsGraphIds) {
+                String nearestEventId = graphIdToEventId.get(graphId);
+                if (nearestEventId != null) {
+                    resultEventIds.add(nearestEventId);
+                } else {
+                    System.err.println("Error in getNearestCommonCausalAncestors: Mapping inconsistent for " + graphId);
+                }
+            }
+            return resultEventIds;
+
         } finally {
             rwLock.readLock().unlock();
         }
