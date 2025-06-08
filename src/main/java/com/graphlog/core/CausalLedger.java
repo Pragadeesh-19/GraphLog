@@ -788,6 +788,34 @@ public class CausalLedger {
         }
     }
 
+    public Integer getGraphIdForEventId(String eventId) {
+        rwLock.readLock().lock();
+        try {
+            return eventIdToGraphId.get(eventId);
+        } finally {
+            rwLock.readLock().unlock();
+        }
+    }
+
+    public String getEventIdForGraphId(int graphId) {
+        rwLock.readLock().lock();
+        try {
+            return graphIdToEventId.get(graphId);
+        } finally {
+            rwLock.readLock().unlock();
+        }
+    }
+
+    public List<Integer> getChildrenGraphIds(int parentGraphId) {
+        rwLock.readLock().lock();
+        try {
+            // Return a copy to prevent modification of the internal list
+            return new ArrayList<>(childrenAdjacencyList.getOrDefault(parentGraphId, Collections.emptyList()));
+        } finally {
+            rwLock.readLock().unlock();
+        }
+    }
+
     @Override
     public String toString() {
         return getStats();
