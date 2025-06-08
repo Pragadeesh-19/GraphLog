@@ -1,1 +1,0 @@
-{"eventId":"9c109e19-2533-4f8d-8236-48a7f9d7d33d","timestamp":"2025-06-08T12:22:59.250013900Z","entityId":"API_USER_SERVICE","eventType":"USER_REGISTERED_VIA_API","payload":{"email":"api@example.com","username":"apiUser"},"causalParentEventIds":[]}
