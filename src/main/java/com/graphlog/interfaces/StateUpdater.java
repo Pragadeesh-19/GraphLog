@@ -1,4 +1,4 @@
-package com.graphlog;
+package com.graphlog.interfaces;
 
 import java.util.Map;
 

@@ -1,4 +1,6 @@
-package com.graphlog;
+package com.graphlog.core;
+
+import com.graphlog.interfaces.StateUpdater;
 
 import java.io.BufferedReader;
 import java.io.IOException;

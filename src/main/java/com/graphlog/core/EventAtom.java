@@ -1,4 +1,4 @@
-package com.graphlog;
+package com.graphlog.core;
 
 import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonProperty;

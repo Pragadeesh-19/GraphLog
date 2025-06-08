@@ -1,4 +1,4 @@
-package com.graphlog;
+package com.graphlog.core;
 
 import java.util.*;
 
