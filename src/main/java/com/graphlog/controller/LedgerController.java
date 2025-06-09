@@ -2,6 +2,9 @@ package com.graphlog.controller;
 
 import com.graphlog.core.CausalLedger;
 import com.graphlog.core.EventAtom;
+import com.graphlog.dto.GraphData;
+import com.graphlog.dto.GraphEdge;
+import com.graphlog.dto.GraphNode;
 import com.graphlog.dto.IngestEventRequest;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
@@ -108,6 +111,131 @@ public class LedgerController {
     @GetMapping("/ledger/stats")
     public ResponseEntity<String> getLedgerStats() {
         return ResponseEntity.ok(ledger.getStats());
+    }
+
+    @GetMapping("/graph/event/{eventId}/ancestors/json")
+    public ResponseEntity<?> getAncestorGraphJson(@PathVariable String eventId) {
+        try {
+            if (!ledger.containsEvent(eventId)) {
+                return ResponseEntity.status(HttpStatus.NOT_FOUND).body("Error: Event not found: " + eventId);
+            }
+
+            // 1. Get all ancestor event IDs (includes self)
+            List<String> ancestorEventIds = ledger.getEventAndCausalAncestryIds(eventId);
+            if (ancestorEventIds.isEmpty() && ledger.containsEvent(eventId)) {
+                ancestorEventIds = List.of(eventId); // Handle root event case
+            } else if (ancestorEventIds.isEmpty()) {
+                return ResponseEntity.status(HttpStatus.NOT_FOUND).body("Error: Event or its ancestry not found for JSON graph: " + eventId);
+            }
+
+            Set<String> relevantEventIdsSet = new HashSet<>(ancestorEventIds);
+            List<GraphNode> nodes = new ArrayList<>();
+            List<GraphEdge> edges = new ArrayList<>();
+
+            // 2. Populate Nodes
+            for (String currentAncestorId : ancestorEventIds) {
+                EventAtom event = ledger.getEvent(currentAncestorId);
+                if (event != null) {
+                    String shortId = event.getEventId().substring(0, Math.min(event.getEventId().length(), 8));
+                    String label = event.getEventType(); // Or more complex label
+                    String title = String.format("Type: %s\nEntity: %s\nID: %s", event.getEventType(), event.getEntityId(), event.getEventId());
+                    String group = event.getEventType(); // Group by event type for Vis.js styling
+
+                    nodes.add(new GraphNode(event.getEventId(), label, title, group));
+                }
+            }
+
+            // 3. Populate Edges (CAUSE -> EFFECT representation)
+            // For an ancestor graph, iterate through each ancestor. If its child is also an ancestor, draw edge.
+            for (String currentCauseId : ancestorEventIds) { // currentCauseId is an ancestor (a CAUSE)
+                EventAtom causeAtom = ledger.getEvent(currentCauseId);
+                if (causeAtom == null) continue;
+
+                // Who did this 'currentCauseId' directly cause THAT IS ALSO in the set of ancestors?
+                // (This means currentCauseId caused an effect, which itself is an ancestor of the original query event)
+                Integer causeGraphId = ledger.getGraphIdForEventId(currentCauseId);
+                if (causeGraphId == null) continue;
+
+                List<Integer> childrenGraphIds = ledger.getChildrenGraphIds(causeGraphId); // Get direct effects of currentCauseId
+
+                for (Integer childGraphId : childrenGraphIds) {
+                    String childEffectId = ledger.getEventIdForGraphId(childGraphId);
+                    // Only add edge if the child (effect) is also in our ancestor subgraph context
+                    if (childEffectId != null && relevantEventIdsSet.contains(childEffectId)) {
+                        edges.add(new GraphEdge(currentCauseId, childEffectId)); // CAUSE -> EFFECT
+                    }
+                }
+            }
+
+            GraphData graphData = new GraphData(nodes, edges);
+            return ResponseEntity.ok(graphData);
+
+        } catch (Exception e) {
+            e.printStackTrace(); // Log server-side for debugging
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body("Error generating JSON graph: " + e.getMessage());
+        }
+    }
+
+    @GetMapping("/graph/event/{eventId}/descendants/json")
+    public ResponseEntity<?> getDescendantGraphJson(@PathVariable String eventId) {
+        try {
+            if (!ledger.containsEvent(eventId)) {
+                return ResponseEntity.status(HttpStatus.NOT_FOUND).body("Error: Event not found: " + eventId);
+            }
+
+            // 1. Get all descendant event IDs (includes self)
+            List<String> descendantEventIds = ledger.getEventAndCausalDescendantsId(eventId); // Assuming plural method name from earlier correction
+            if (descendantEventIds.isEmpty() && ledger.containsEvent(eventId)) {
+                descendantEventIds = List.of(eventId); // Handle leaf event case
+            } else if (descendantEventIds.isEmpty()){
+                return ResponseEntity.status(HttpStatus.NOT_FOUND).body("Error: Event or its descendants not found for JSON graph: " + eventId);
+            }
+
+            Set<String> relevantEventIdsSet = new HashSet<>(descendantEventIds);
+            List<GraphNode> nodes = new ArrayList<>();
+            List<GraphEdge> edges = new ArrayList<>();
+
+            // 2. Populate Nodes
+            for (String currentDescendantId : descendantEventIds) {
+                EventAtom event = ledger.getEvent(currentDescendantId);
+                if (event != null) {
+                    String shortId = event.getEventId().substring(0, Math.min(event.getEventId().length(), 8));
+                    String label = event.getEventType();
+                    String title = String.format("Type: %s\nEntity: %s\nID: %s", event.getEventType(), event.getEntityId(), event.getEventId());
+                    String group = event.getEventType();
+
+                    nodes.add(new GraphNode(event.getEventId(), label, title, group));
+                }
+            }
+
+            // 3. Populate Edges (CAUSE -> EFFECT representation)
+            // For a descendant graph, iterate through each descendant (which can be a cause).
+            // Find its direct children that are also in the descendant set.
+            for (String currentCauseId : descendantEventIds) { // currentCauseId is one of the events in the descendant subgraph
+                EventAtom causeAtom = ledger.getEvent(currentCauseId);
+                if (causeAtom == null) continue;
+
+                Integer causeGraphId = ledger.getGraphIdForEventId(currentCauseId);
+                if (causeGraphId == null) continue;
+
+                List<Integer> childrenGraphIds = ledger.getChildrenGraphIds(causeGraphId); // Get direct effects of currentCauseId
+
+                for (Integer childGraphId : childrenGraphIds) {
+                    String childEffectId = ledger.getEventIdForGraphId(childGraphId);
+                    // Only add edge if this child (effect) is also part of the overall descendant set requested
+                    if (childEffectId != null && relevantEventIdsSet.contains(childEffectId)) {
+                        edges.add(new GraphEdge(currentCauseId, childEffectId)); // CAUSE -> EFFECT
+                    }
+                }
+            }
+
+            GraphData graphData = new GraphData(nodes, edges);
+            return ResponseEntity.ok(graphData);
+
+        } catch (Exception e) {
+            e.printStackTrace(); // Log server-side for debugging
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body("Error generating JSON graph: " + e.getMessage());
+        }
     }
 
     @GetMapping("/visualize/event/{eventId}/ancestors/dot")

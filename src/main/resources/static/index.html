@@ -1,0 +1,543 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Aethelred - Visual Causal Interrogator</title>
+    <script type="text/javascript" src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"></script>
+    <link href="https://unpkg.com/vis-network/styles/vis-network.min.css" rel="stylesheet" type="text/css" />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            color: #333;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 2rem;
+        }
+
+        .header {
+            text-align: center;
+            margin-bottom: 3rem;
+        }
+
+        .header h1 {
+            font-size: 3rem;
+            font-weight: 700;
+            color: white;
+            margin-bottom: 0.5rem;
+            text-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+
+        .header .subtitle {
+            font-size: 1.2rem;
+            color: rgba(255, 255, 255, 0.8);
+            font-weight: 300;
+        }
+
+        .controls-panel {
+            background: rgba(255, 255, 255, 0.95);
+            backdrop-filter: blur(10px);
+            border-radius: 20px;
+            padding: 2rem;
+            margin-bottom: 2rem;
+            box-shadow: 0 20px 40px rgba(0,0,0,0.1);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+        }
+
+        .input-group {
+            display: flex;
+            gap: 1rem;
+            align-items: center;
+            flex-wrap: wrap;
+            justify-content: center;
+        }
+
+        .input-wrapper {
+            position: relative;
+            flex: 1;
+            min-width: 300px;
+            max-width: 400px;
+        }
+
+        .input-wrapper input {
+            width: 100%;
+            padding: 1rem 1.5rem;
+            border: 2px solid #e1e5e9;
+            border-radius: 12px;
+            font-size: 1rem;
+            font-weight: 400;
+            background: white;
+            transition: all 0.3s ease;
+            outline: none;
+        }
+
+        .input-wrapper input:focus {
+            border-color: #667eea;
+            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+            transform: translateY(-1px);
+        }
+
+        .input-wrapper label {
+            position: absolute;
+            top: -0.5rem;
+            left: 1rem;
+            background: white;
+            padding: 0 0.5rem;
+            font-size: 0.875rem;
+            font-weight: 500;
+            color: #667eea;
+        }
+
+        .button-group {
+            display: flex;
+            gap: 1rem;
+        }
+
+        .btn {
+            padding: 1rem 2rem;
+            border: none;
+            border-radius: 12px;
+            font-size: 1rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            box-shadow: 0 4px 15px rgba(102, 126, 234, 0.3);
+        }
+
+        .btn-secondary {
+            background: linear-gradient(135deg, #ffecd2 0%, #fcb69f 100%);
+            color: #8b4513;
+            box-shadow: 0 4px 15px rgba(252, 182, 159, 0.3);
+        }
+
+        .btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 25px rgba(0,0,0,0.2);
+        }
+
+        .btn:active {
+            transform: translateY(0);
+        }
+
+        .btn::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: -100%;
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(90deg, transparent, rgba(255,255,255,0.2), transparent);
+            transition: left 0.5s;
+        }
+
+        .btn:hover::before {
+            left: 100%;
+        }
+
+        .main-content {
+            display: grid;
+            grid-template-columns: 1fr 350px;
+            gap: 2rem;
+            height: calc(100vh - 200px);
+            min-height: 600px;
+        }
+
+        .graph-container {
+            background: rgba(255, 255, 255, 0.95);
+            backdrop-filter: blur(10px);
+            border-radius: 20px;
+            padding: 1.5rem;
+            box-shadow: 0 20px 40px rgba(0,0,0,0.1);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            position: relative;
+            overflow: hidden;
+        }
+
+        #causalNetwork {
+            width: 100%;
+            height: 100%;
+            border-radius: 12px;
+            background: #fafbfc;
+        }
+
+        .details-panel {
+            background: rgba(255, 255, 255, 0.95);
+            backdrop-filter: blur(10px);
+            border-radius: 20px;
+            padding: 1.5rem;
+            box-shadow: 0 20px 40px rgba(0,0,0,0.1);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            overflow: hidden;
+        }
+
+        .details-header {
+            font-size: 1.2rem;
+            font-weight: 600;
+            color: #333;
+            margin-bottom: 1rem;
+            padding-bottom: 0.5rem;
+            border-bottom: 2px solid #e1e5e9;
+        }
+
+        #eventDetails {
+            background: #f8f9fa;
+            border-radius: 12px;
+            padding: 1.5rem;
+            white-space: pre-wrap;
+            font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+            font-size: 0.875rem;
+            line-height: 1.6;
+            color: #333;
+            overflow-y: auto;
+            max-height: calc(100% - 80px);
+            border: 1px solid #e1e5e9;
+        }
+
+        .loading {
+            display: none;
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(255, 255, 255, 0.9);
+            padding: 2rem;
+            border-radius: 12px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.1);
+            text-align: center;
+            z-index: 1000;
+        }
+
+        .spinner {
+            width: 40px;
+            height: 40px;
+            border: 4px solid #f3f4f6;
+            border-top: 4px solid #667eea;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 1rem;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .status-indicator {
+            position: absolute;
+            top: 1rem;
+            right: 1rem;
+            padding: 0.5rem 1rem;
+            border-radius: 20px;
+            font-size: 0.875rem;
+            font-weight: 500;
+            opacity: 0;
+            transition: all 0.3s ease;
+        }
+
+        .status-success {
+            background: #10b981;
+            color: white;
+        }
+
+        .status-error {
+            background: #ef4444;
+            color: white;
+        }
+
+        .status-indicator.show {
+            opacity: 1;
+        }
+
+        @media (max-width: 1024px) {
+            .main-content {
+                grid-template-columns: 1fr;
+                grid-template-rows: 1fr auto;
+            }
+
+            .details-panel {
+                height: 300px;
+            }
+
+            .input-group {
+                flex-direction: column;
+                align-items: stretch;
+            }
+
+            .button-group {
+                justify-content: center;
+            }
+        }
+
+        @media (max-width: 768px) {
+            .container {
+                padding: 1rem;
+            }
+
+            .header h1 {
+                font-size: 2rem;
+            }
+
+            .button-group {
+                flex-direction: column;
+            }
+        }
+    </style>
+</head>
+<body>
+<div class="container">
+    <div class="header">
+        <h1>AETHELRED</h1>
+        <div class="subtitle">Visual Causal Interrogator</div>
+    </div>
+
+    <div class="controls-panel">
+        <div class="input-group">
+            <div class="input-wrapper">
+                <label for="eventIdInput">Event ID</label>
+                <input type="text" id="eventIdInput" placeholder="Enter Event ID to explore causality">
+            </div>
+            <div class="button-group">
+                <button class="btn btn-primary" onclick="fetchAndDrawGraph('ancestors')">
+                    Show Ancestors
+                </button>
+                <button class="btn btn-secondary" onclick="fetchAndDrawGraph('descendants')">
+                    Show Descendants
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <div class="main-content">
+        <div class="graph-container">
+            <div id="causalNetwork"></div>
+            <div class="loading" id="loading">
+                <div class="spinner"></div>
+                <div>Analyzing causal relationships...</div>
+            </div>
+            <div class="status-indicator" id="statusIndicator"></div>
+        </div>
+
+        <div class="details-panel">
+            <div class="details-header">Event Details</div>
+            <div id="eventDetails">Click a node in the graph to see detailed event information here.</div>
+        </div>
+    </div>
+</div>
+
+<script type="text/javascript">
+    var network = null;
+    var nodesDataSet = new vis.DataSet([]);
+    var edgesDataSet = new vis.DataSet([]);
+
+    function showStatus(message, isError = false) {
+        const indicator = document.getElementById('statusIndicator');
+        indicator.textContent = message;
+        indicator.className = `status-indicator ${isError ? 'status-error' : 'status-success'} show`;
+        setTimeout(() => {
+            indicator.classList.remove('show');
+        }, 3000);
+    }
+
+    function showLoading(show = true) {
+        document.getElementById('loading').style.display = show ? 'block' : 'none';
+    }
+
+    function destroyNetwork() {
+        if (network !== null) {
+            network.destroy();
+            network = null;
+        }
+    }
+
+    async function fetchAndDrawGraph(type) {
+        destroyNetwork();
+        nodesDataSet.clear();
+        edgesDataSet.clear();
+        document.getElementById('eventDetails').textContent = 'Click a node in the graph to see detailed event information here.';
+
+        const eventId = document.getElementById('eventIdInput').value.trim();
+        if (!eventId) {
+            showStatus('Please enter an Event ID', true);
+            return;
+        }
+
+        showLoading(true);
+        const apiUrl = `/api/v1/graph/event/${encodeURIComponent(eventId)}/${type}/json`;
+
+        try {
+            const response = await fetch(apiUrl);
+            if (!response.ok) {
+                const errorBody = await response.text();
+                showStatus(`Error: ${response.status}`, true);
+                showLoading(false);
+                return;
+            }
+
+            const graphData = await response.json();
+
+            if (!graphData.nodes || graphData.nodes.length === 0) {
+                showStatus('No data found for this event', true);
+                showLoading(false);
+                return;
+            }
+
+            nodesDataSet.add(graphData.nodes);
+            edgesDataSet.add(graphData.edges);
+
+            const container = document.getElementById('causalNetwork');
+            const data = {
+                nodes: nodesDataSet,
+                edges: edgesDataSet
+            };
+
+            const options = {
+                layout: {
+                    hierarchical: {
+                        enabled: true,
+                        direction: (type === 'ancestors') ? "UD" : "LR",
+                        sortMethod: "directed",
+                        levelSeparation: 150,
+                        nodeSpacing: 200,
+                        treeSpacing: 300
+                    }
+                },
+                nodes: {
+                    shape: 'box',
+                    margin: 15,
+                    font: {
+                        size: 14,
+                        face: 'Inter, sans-serif',
+                        color: '#333',
+                        strokeWidth: 2,
+                        strokeColor: '#ffffff'
+                    },
+                    borderWidth: 2,
+                    borderWidthSelected: 3,
+                    color: {
+                        border: '#667eea',
+                        background: '#ffffff',
+                        highlight: {
+                            border: '#764ba2',
+                            background: '#f0f4ff'
+                        }
+                    },
+                    shadow: {
+                        enabled: true,
+                        color: 'rgba(0,0,0,0.1)',
+                        size: 5,
+                        x: 0,
+                        y: 2
+                    }
+                },
+                edges: {
+                    arrows: {
+                        to: {
+                            enabled: true,
+                            scaleFactor: 1.2
+                        }
+                    },
+                    color: {
+                        color: '#667eea',
+                        highlight: '#764ba2',
+                        opacity: 0.8
+                    },
+                    width: 2,
+                    smooth: {
+                        type: 'cubicBezier',
+                        forceDirection: (type === 'ancestors') ? 'vertical' : 'horizontal',
+                        roundness: 0.4
+                    },
+                    shadow: {
+                        enabled: true,
+                        color: 'rgba(0,0,0,0.1)',
+                        size: 3,
+                        x: 0,
+                        y: 1
+                    }
+                },
+                physics: {
+                    enabled: false
+                },
+                interaction: {
+                    hover: true,
+                    selectConnectedEdges: false,
+                    tooltipDelay: 200
+                }
+            };
+
+            network = new vis.Network(container, data, options);
+
+            network.on("click", async function (params) {
+                if (params.nodes.length > 0) {
+                    const clickedNodeId = params.nodes[0];
+                    const eventDetailUrl = `/api/v1/events/${encodeURIComponent(clickedNodeId)}`;
+
+                    try {
+                        const detailResponse = await fetch(eventDetailUrl);
+                        if (!detailResponse.ok) {
+                            document.getElementById('eventDetails').textContent = `Error fetching details for ${clickedNodeId}: ${detailResponse.status}`;
+                            return;
+                        }
+                        const eventAtom = await detailResponse.json();
+                        document.getElementById('eventDetails').textContent = JSON.stringify(eventAtom, null, 2);
+                    } catch (err) {
+                        document.getElementById('eventDetails').textContent = `Error fetching details: ${err}`;
+                    }
+                } else {
+                    document.getElementById('eventDetails').textContent = 'Click a node in the graph to see detailed event information here.';
+                }
+            });
+
+            network.on("hoverNode", function(params) {
+                container.style.cursor = 'pointer';
+            });
+
+            network.on("blurNode", function(params) {
+                container.style.cursor = 'default';
+            });
+
+            showStatus(`Loaded ${graphData.nodes.length} events with ${graphData.edges.length} relationships`);
+            showLoading(false);
+
+        } catch (error) {
+            showStatus(`Failed to load graph: ${error.message}`, true);
+            showLoading(false);
+            console.error("Error in fetchAndDrawGraph:", error);
+        }
+    }
+
+    // Handle Enter key in input field
+    document.getElementById('eventIdInput').addEventListener('keypress', function(e) {
+        if (e.key === 'Enter') {
+            fetchAndDrawGraph('descendants');
+        }
+    });
+
+    // Auto-focus input on load
+    window.addEventListener('load', function() {
+        document.getElementById('eventIdInput').focus();
+    });
+</script>
+</body>
+</html>
