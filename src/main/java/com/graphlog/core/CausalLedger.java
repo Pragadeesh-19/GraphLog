@@ -21,8 +21,10 @@ public class CausalLedger {
     private final Map<Integer, List<Integer>> childrenAdjacencyList = new ConcurrentHashMap<>();
     private final Graph causalGraph;
     private final Map<String, List<String>> entityToEventIdsIndex  = new ConcurrentHashMap<>();
+    private final VectorClockManager vcManager;
+    private final String localNodeId = "GRAPH_NODE_01";
 
-    private final Map<String, StateUpdater<Map<String, Object>>> stateUpdater = new ConcurrentHashMap<>();
+    private final Map<String, StateUpdater<Map<String, Object>>> stateUpdaters = new ConcurrentHashMap<>();
 
     private final String logFilePath;
     private final ReentrantReadWriteLock rwLock = new ReentrantReadWriteLock();
@@ -52,6 +54,7 @@ public class CausalLedger {
     public CausalLedger(String logFilePath, int initialGraphCapacity) {
         this.logFilePath = logFilePath;
         this.causalGraph = new Graph(initialGraphCapacity);
+        this.vcManager = new VectorClockManager(this.localNodeId);
 
         Path logPath = Paths.get(logFilePath);
         Path parentDir = logPath.getParent();
@@ -75,7 +78,7 @@ public class CausalLedger {
     }
 
     private void registerDefaultStateUpdaters() {
-        stateUpdater.put("USER_CREATED", ((currentState, eventPayload, eventType) -> {
+        stateUpdaters.put("USER_CREATED", ((currentState, eventPayload, eventType) -> {
             Map<String, Object> newState = new HashMap<>();
             newState.put("userId", eventPayload.get("userId"));
             newState.put("username", eventPayload.get("username"));
@@ -86,7 +89,7 @@ public class CausalLedger {
             return newState;
         }));
 
-        stateUpdater.put("USER_RENAMED", (currentState, payload, type) -> {
+        stateUpdaters.put("USER_RENAMED", (currentState, payload, type) -> {
             Map<String, Object> newState = new HashMap<>(currentState);
             newState.put("username", payload.get("newUsername"));
             newState.put("version", (Integer) currentState.getOrDefault("version", 0) + 1);
@@ -95,7 +98,7 @@ public class CausalLedger {
             return newState;
         });
 
-        stateUpdater.put("USER_DEACTIVATED", (currentState, payload, type) -> {
+        stateUpdaters.put("USER_DEACTIVATED", (currentState, payload, type) -> {
             Map<String, Object> newState = new HashMap<>(currentState);
             newState.put("isActive", false);
             newState.put("deactivationReason", payload.get("reason"));
@@ -105,7 +108,7 @@ public class CausalLedger {
             return newState;
         });
 
-        stateUpdater.put("USER_REACTIVATED", (currentState, payload, type) -> {
+        stateUpdaters.put("USER_REACTIVATED", (currentState, payload, type) -> {
             Map<String, Object> newState = new HashMap<>(currentState);
             newState.put("isActive", true);
             newState.remove("deactivationReason");
@@ -116,7 +119,7 @@ public class CausalLedger {
             return newState;
         });
 
-        stateUpdater.put("PRODUCT_ADDED", (currentState, payload, type) -> {
+        stateUpdaters.put("PRODUCT_ADDED", (currentState, payload, type) -> {
             Map<String, Object> newState = new HashMap<>();
             newState.put("productId", payload.get("productId"));
             newState.put("productName", payload.get("productName"));
@@ -128,7 +131,7 @@ public class CausalLedger {
             return newState;
         });
 
-        stateUpdater.put("PRODUCT_UPDATED", (currentState, payload, type) -> {
+        stateUpdaters.put("PRODUCT_UPDATED", (currentState, payload, type) -> {
             Map<String, Object> newState = new HashMap<>(currentState);
             if (payload.containsKey("productName")) {
                 newState.put("productName", payload.get("productName"));
@@ -142,7 +145,7 @@ public class CausalLedger {
             return newState;
         });
 
-        stateUpdater.put("STOCK_INCREMENTED", (currentState, payload, type) -> {
+        stateUpdaters.put("STOCK_INCREMENTED", (currentState, payload, type) -> {
             Map<String, Object> newState = new HashMap<>(currentState);
             int currentStock = (Integer) currentState.getOrDefault("stock", 0);
             int amountIncremented = (Integer) payload.getOrDefault("amount", 0);
@@ -153,7 +156,7 @@ public class CausalLedger {
             return newState;
         });
 
-        stateUpdater.put("STOCK_DECREMENTED", (currentState, payload, type) -> {
+        stateUpdaters.put("STOCK_DECREMENTED", (currentState, payload, type) -> {
             Map<String, Object> newState = new HashMap<>(currentState);
             int currentStock = (Integer) currentState.getOrDefault("stock", 0);
             int amountDecremented = (Integer) payload.getOrDefault("amount", 0);
@@ -165,7 +168,7 @@ public class CausalLedger {
         });
 
         // Order Service event handlers
-        stateUpdater.put("ORDER_CREATED", (currentState, payload, type) -> {
+        stateUpdaters.put("ORDER_CREATED", (currentState, payload, type) -> {
             Map<String, Object> newState = new HashMap<>();
             newState.put("orderId", payload.get("orderId"));
             newState.put("userId", payload.get("userId"));
@@ -178,7 +181,7 @@ public class CausalLedger {
             return newState;
         });
 
-        stateUpdater.put("ORDER_CONFIRMED", (currentState, payload, type) -> {
+        stateUpdaters.put("ORDER_CONFIRMED", (currentState, payload, type) -> {
             Map<String, Object> newState = new HashMap<>(currentState);
             newState.put("status", "CONFIRMED");
             newState.put("version", (Integer) currentState.getOrDefault("version", 0) + 1);
@@ -187,7 +190,7 @@ public class CausalLedger {
             return newState;
         });
 
-        stateUpdater.put("ORDER_SHIPPED", (currentState, payload, type) -> {
+        stateUpdaters.put("ORDER_SHIPPED", (currentState, payload, type) -> {
             Map<String, Object> newState = new HashMap<>(currentState);
             newState.put("status", "SHIPPED");
             newState.put("trackingNumber", payload.get("trackingNumber"));
@@ -197,7 +200,7 @@ public class CausalLedger {
             return newState;
         });
 
-        stateUpdater.put("ORDER_CANCELLED", (currentState, payload, type) -> {
+        stateUpdaters.put("ORDER_CANCELLED", (currentState, payload, type) -> {
             Map<String, Object> newState = new HashMap<>(currentState);
             newState.put("status", "CANCELLED");
             newState.put("cancellationReason", payload.get("reason"));
@@ -209,7 +212,7 @@ public class CausalLedger {
     }
 
     public void registerStateUpdater(String eventType, StateUpdater<Map<String, Object>> updater) {
-        stateUpdater.put(eventType, updater);
+        stateUpdaters.put(eventType, updater);
         System.out.println("Registered state updater for event type: " + eventType);
     }
 
@@ -243,7 +246,7 @@ public class CausalLedger {
             for (EventAtom event : entityEventsInCausalOrder) {
                 System.out.println("  Replaying event: " + event.getEventType() + " (ID: " + event.getEventId() + ")");
 
-                StateUpdater<Map<String, Object>> updater = stateUpdater.get(event.getEventType());
+                StateUpdater<Map<String, Object>> updater = stateUpdaters.get(event.getEventType());
                 if (updater != null) {
                     try {
                         currentState = updater.apply(currentState, event.getPayload(), event.getEventType());
@@ -298,7 +301,7 @@ public class CausalLedger {
             Map<String, Object> currentState = new HashMap<>();
 
             for (EventAtom event : entityEventsInCausalOrder) {
-                StateUpdater<Map<String, Object>> updater = stateUpdater.get(event.getEventType());
+                StateUpdater<Map<String, Object>> updater = stateUpdaters.get(event.getEventType());
                 if (updater != null) {
                     try {
                         currentState = updater.apply(currentState, event.getPayload(), event.getEventType());
@@ -358,7 +361,7 @@ public class CausalLedger {
                         .add(newGraphNodeId);
             }
 
-            EventAtom newEvent = new EventAtom(entityId, eventType, payload, causalParentEventIds);
+            EventAtom newEvent = vcManager.createEvent(entityId, eventType, payload, causalParentEventIds);
             String eventId = newEvent.getEventId();
 
             eventStoreById.put(eventId, newEvent);
@@ -760,13 +763,25 @@ public class CausalLedger {
         }
     }
 
+    public VectorClockManager getVectorClockManager() {
+        return vcManager;
+    }
+
+    public String getLocalNodeId() {
+        return localNodeId;
+    }
+
+    public VectorClock getCurrentVectorClock() {
+        return vcManager.getCurrentClock();
+    }
+
     public String getStats() {
         rwLock.readLock().lock();
         try {
             return String.format(
-                    "CausalLedger[events=%d, ingested=%d, cycleChecks=%d, cyclesPrevented=%d, graph=%s, logFile='%s']",
+                    "CausalLedger[events=%d, ingested=%d, cycleChecks=%d, cyclesPrevented=%d, graph=%s, nodeId='%s', vectorClock='%s', logFile='%s']",
                     eventStoreById.size(), totalEventsIngested, totalCycleChecks, totalCyclesPrevented,
-                    causalGraph.getGraphStats(), logFilePath);
+                    causalGraph.getGraphStats(), localNodeId, vcManager.getCurrentClock(), logFilePath);
         } finally {
             rwLock.readLock().unlock();
         }

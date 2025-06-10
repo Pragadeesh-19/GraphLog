@@ -1,11 +1,9 @@
 package com.graphlog.controller;
 
 import com.graphlog.core.CausalLedger;
+import com.graphlog.core.CausalRelationship;
 import com.graphlog.core.EventAtom;
-import com.graphlog.dto.GraphData;
-import com.graphlog.dto.GraphEdge;
-import com.graphlog.dto.GraphNode;
-import com.graphlog.dto.IngestEventRequest;
+import com.graphlog.dto.*;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -450,6 +448,43 @@ public class LedgerController {
             e.printStackTrace();
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body("Error generating latest events graph: " + e.getMessage());
         }
+    }
+
+    @PostMapping("/events/compare-causality")
+    public ResponseEntity<?> compareCausality(@RequestBody CompareCausalityRequest req) {
+        String e1 = req.getEventId1();
+        String e2 = req.getEventId2();
+
+        if (!ledger.containsEvent(e1) || !ledger.containsEvent(e2)) {
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                    .body("One or both event IDs not found: " + e1 + ", " + e2);
+        }
+
+        EventAtom atom1 = ledger.getEvent(e1);
+        EventAtom atom2 = ledger.getEvent(e2);
+
+        // VC-based relationship
+        CausalRelationship vcRel = atom1.getCausalRelationshipWith(atom2);
+        boolean vcCauses = (vcRel == CausalRelationship.CAUSES);
+
+        // Explicit graph computations
+        List<String> path1To2 = ledger.getShortestCausalPath(e1, e2);
+        List<String> path2To1 = ledger.getShortestCausalPath(e2, e1);
+        List<String> allCommon = ledger.getAllCommonCausalAncestors(e1, e2);
+        List<String> nearestCommon = ledger.getNearestCommonCausalAncestors(e1, e2);
+
+        CompareCausalityResponse resp = CompareCausalityResponse.builder()
+                .eventId1(e1)
+                .eventId2(e2)
+                .relationship(vcRel)
+                .event1HappensBeforeEvent2_VC(vcCauses)
+                .shortestPath1To2_ExplicitGraph(path1To2)
+                .shortestPath2To1_ExplicitGraph(path2To1)
+                .allCommonAncestors_ExplicitGraph(allCommon)
+                .nearestCommonAncestors_ExplicitGraph(nearestCommon)
+                .build();
+
+        return ResponseEntity.ok(resp);
     }
 
 }
