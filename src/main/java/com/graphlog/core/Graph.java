@@ -1,9 +1,12 @@
 package com.graphlog.core;
 
+import lombok.Getter;
+
 import java.util.*;
 
 public class Graph {
 
+    @Getter
     private int numVertices;
     private List<List<Integer>> adj;
     private int capacity;
@@ -187,7 +190,4 @@ public class Graph {
         return getGraphStats();
     }
 
-    public int getNumVertices() {
-        return numVertices;
-    }
 }

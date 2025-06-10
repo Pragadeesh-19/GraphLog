@@ -20,6 +20,7 @@ public class CausalLedger {
     private final Map<Integer, String> graphIdToEventId = new ConcurrentHashMap<>();
     private final Map<Integer, List<Integer>> childrenAdjacencyList = new ConcurrentHashMap<>();
     private final Graph causalGraph;
+    private final Map<String, List<String>> entityToEventIdsIndex  = new ConcurrentHashMap<>();
 
     private final Map<String, StateUpdater<Map<String, Object>>> stateUpdater = new ConcurrentHashMap<>();
 
@@ -364,6 +365,9 @@ public class CausalLedger {
             eventIdToGraphId.put(eventId, newGraphNodeId);
             graphIdToEventId.put(newGraphNodeId, eventId);
 
+            String entityIdForIndex = newEvent.getEntityId();
+            this.entityToEventIdsIndex.computeIfAbsent(entityIdForIndex, k -> new ArrayList<>()).add(eventId);
+
             appendEventToLog(newEvent);
 
             totalEventsIngested++;
@@ -417,6 +421,10 @@ public class CausalLedger {
                     eventStoreById.put(event.getEventId(), event);
                     eventIdToGraphId.put(event.getEventId(), graphNodeId);
                     graphIdToEventId.put(graphNodeId, event.getEventId());
+
+                    String loadedEventId = event.getEventId();
+                    String loadedEntityId = event.getEntityId();
+                    this.entityToEventIdsIndex.computeIfAbsent(loadedEntityId, k -> new ArrayList<>()).add(loadedEventId);
 
                     for (String parentId : event.getCausalParentEventIds()) {
                         Integer parentGraphId = eventIdToGraphId.get(parentId);
@@ -767,10 +775,19 @@ public class CausalLedger {
     public List<EventAtom> getEventsByEntity(String entityId) {
         rwLock.readLock().lock();
         try {
-            return eventStoreById.values().stream()
-                    .filter(event -> entityId.equals(event.getEntityId()))
-                    .sorted(Comparator.comparing(EventAtom::getTimestamp))
-                    .toList();
+            List<String> eventIdsForEntity = this.entityToEventIdsIndex.getOrDefault(entityId, Collections.emptyList());
+            if (eventIdsForEntity.isEmpty()) {
+                return Collections.emptyList();
+            }
+
+            List<EventAtom> events = new ArrayList<>(eventIdsForEntity.size());
+            for (String eventId : eventIdsForEntity) {
+                EventAtom event = this.eventStoreById.get(eventId);
+                if (event != null) {
+                    events.add(event);
+                }
+            }
+            return events;
         } finally {
             rwLock.readLock().unlock();
         }

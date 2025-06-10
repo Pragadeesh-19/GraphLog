@@ -368,4 +368,88 @@ public class LedgerController {
         }
     }
 
+    @GetMapping("/graph/events/latest/json")
+    public ResponseEntity<?> getLatestEventsGraphJson(
+            @RequestParam(defaultValue = "10") int limit,
+            @RequestParam(defaultValue = "1") int historyDepth) {
+        try {
+            if (limit <= 0 || limit > 100) {
+                return ResponseEntity.status(HttpStatus.BAD_REQUEST).body("Limit must be between 1 and 100");
+            }
+            if (historyDepth <= 0 || historyDepth > 5) {
+                return ResponseEntity.status(HttpStatus.BAD_REQUEST).body("History depth must be between 1 and 5");
+            }
+
+            List<String> allTopoEvents = ledger.getEventsInTopologicalOrder();
+            if (allTopoEvents.isEmpty()) {
+                return ResponseEntity.ok(new GraphData(Collections.emptyList(), Collections.emptyList()));
+            }
+
+            List<String> recentEventIds = allTopoEvents.subList(
+                    Math.max(0, allTopoEvents.size() - limit),
+                    allTopoEvents.size()
+            );
+
+            Set<String> relevantEventIdsSet = new HashSet<>(recentEventIds);
+            Queue<String> frontier = new LinkedList<>(recentEventIds); // for BFS like traversal
+
+            Map<String, Integer> eventDepth = new HashMap<>();
+            for (String recentId : recentEventIds) {
+                eventDepth.put(recentId, 0); // initial events are depth 0 from themselves
+            }
+
+            while (!frontier.isEmpty()) {
+                String currentEventId = frontier.poll();
+                int currentDepth = eventDepth.getOrDefault(currentEventId, 0);
+
+                if (currentDepth >= historyDepth) {
+                    continue;
+                }
+
+                EventAtom currentEventAtom = ledger.getEvent(currentEventId);
+                if (currentEventAtom != null) {
+                    for (String parentId : currentEventAtom.getCausalParentEventIds()) {
+                        if (relevantEventIdsSet.add(parentId)) {
+                            frontier.offer(parentId);
+                            eventDepth.put(parentId, currentDepth + 1);
+                        }
+                    }
+                }
+            }
+
+            List<GraphNode> nodes = new ArrayList<>();
+            for (String eventIdFromSet : relevantEventIdsSet) {
+                EventAtom event = ledger.getEvent(eventIdFromSet);
+                if (event != null) {
+                    String label = event.getEventType();
+                    String title = String.format("Type: %s\nEntity: %s\nID: %s", event.getEventType(), event.getEntityId(), event.getEventId());
+                    String group = event.getEventType();
+                    nodes.add(new GraphNode(event.getEventId(), label, title, group));
+                }
+            }
+
+            // cause -> effect
+            List<GraphEdge> edges = new ArrayList<>();
+            for (String causeId : relevantEventIdsSet) { // Each node in our subgraph can be a cause
+                Integer causeGraphId = ledger.getGraphIdForEventId(causeId);
+                if (causeGraphId == null) continue;
+
+                List<Integer> childrenGraphIds = ledger.getChildrenGraphIds(causeGraphId);
+                for (Integer childGraphId : childrenGraphIds) {
+                    String effectId = ledger.getEventIdForGraphId(childGraphId);
+                    // Add edge only if BOTH cause and effect are in our 'relevantEventIdsSet'
+                    if (effectId != null && relevantEventIdsSet.contains(effectId)) {
+                        edges.add(new GraphEdge(causeId, effectId));
+                    }
+                }
+            }
+
+            GraphData graphData = new GraphData(nodes, edges);
+            return ResponseEntity.ok(graphData);
+        } catch (Exception e) {
+            e.printStackTrace();
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body("Error generating latest events graph: " + e.getMessage());
+        }
+    }
+
 }

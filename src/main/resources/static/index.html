@@ -56,6 +56,22 @@
             border: 1px solid rgba(255, 255, 255, 0.2);
         }
 
+        .control-section {
+            margin-bottom: 1.5rem;
+        }
+
+        .control-section:last-child {
+            margin-bottom: 0;
+        }
+
+        .section-title {
+            font-size: 1rem;
+            font-weight: 600;
+            color: #667eea;
+            margin-bottom: 1rem;
+            text-align: center;
+        }
+
         .input-group {
             display: flex;
             gap: 1rem;
@@ -103,6 +119,8 @@
         .button-group {
             display: flex;
             gap: 1rem;
+            justify-content: center;
+            flex-wrap: wrap;
         }
 
         .btn {
@@ -117,6 +135,7 @@
             letter-spacing: 0.5px;
             position: relative;
             overflow: hidden;
+            white-space: nowrap;
         }
 
         .btn-primary {
@@ -129,6 +148,12 @@
             background: linear-gradient(135deg, #ffecd2 0%, #fcb69f 100%);
             color: #8b4513;
             box-shadow: 0 4px 15px rgba(252, 182, 159, 0.3);
+        }
+
+        .btn-accent {
+            background: linear-gradient(135deg, #a8edea 0%, #fed6e3 100%);
+            color: #5a6c7d;
+            box-shadow: 0 4px 15px rgba(168, 237, 234, 0.3);
         }
 
         .btn:hover {
@@ -159,7 +184,7 @@
             display: grid;
             grid-template-columns: 1fr 350px;
             gap: 2rem;
-            height: calc(100vh - 200px);
+            height: calc(100vh - 250px);
             min-height: 600px;
         }
 
@@ -269,6 +294,12 @@
             opacity: 1;
         }
 
+        .divider {
+            height: 1px;
+            background: linear-gradient(90deg, transparent, #e1e5e9, transparent);
+            margin: 1.5rem 0;
+        }
+
         @media (max-width: 1024px) {
             .main-content {
                 grid-template-columns: 1fr;
@@ -301,6 +332,10 @@
             .button-group {
                 flex-direction: column;
             }
+
+            .btn {
+                width: 100%;
+            }
         }
     </style>
 </head>
@@ -312,18 +347,32 @@
     </div>
 
     <div class="controls-panel">
-        <div class="input-group">
-            <div class="input-wrapper">
-                <label for="eventIdInput">Event ID</label>
-                <input type="text" id="eventIdInput" placeholder="Enter Event ID to explore causality">
-            </div>
+        <div class="control-section">
+            <div class="section-title">Recent Activity Overview</div>
             <div class="button-group">
-                <button class="btn btn-primary" onclick="fetchAndDrawGraph('ancestors')">
-                    Show Ancestors
+                <button class="btn btn-accent" onclick="fetchLatestEvents()">
+                    Show Recent Activity
                 </button>
-                <button class="btn btn-secondary" onclick="fetchAndDrawGraph('descendants')">
-                    Show Descendants
-                </button>
+            </div>
+        </div>
+
+        <div class="divider"></div>
+
+        <div class="control-section">
+            <div class="section-title">Specific Event Exploration</div>
+            <div class="input-group">
+                <div class="input-wrapper">
+                    <label for="eventIdInput">Event ID</label>
+                    <input type="text" id="eventIdInput" placeholder="Enter Event ID to explore causality">
+                </div>
+                <div class="button-group">
+                    <button class="btn btn-primary" onclick="fetchAndDrawGraph('ancestors')">
+                        Show Ancestors
+                    </button>
+                    <button class="btn btn-secondary" onclick="fetchAndDrawGraph('descendants')">
+                        Show Descendants
+                    </button>
+                </div>
             </div>
         </div>
     </div>
@@ -370,6 +419,161 @@
         }
     }
 
+    function createNetwork(layoutDirection = "LR") {
+        const container = document.getElementById('causalNetwork');
+        const data = {
+            nodes: nodesDataSet,
+            edges: edgesDataSet
+        };
+
+        const options = {
+            layout: {
+                hierarchical: {
+                    enabled: true,
+                    direction: layoutDirection,
+                    sortMethod: "directed",
+                    levelSeparation: 150,
+                    nodeSpacing: 200,
+                    treeSpacing: 300
+                }
+            },
+            nodes: {
+                shape: 'box',
+                margin: 15,
+                font: {
+                    size: 14,
+                    face: 'Inter, sans-serif',
+                    color: '#333',
+                    strokeWidth: 2,
+                    strokeColor: '#ffffff'
+                },
+                borderWidth: 2,
+                borderWidthSelected: 3,
+                color: {
+                    border: '#667eea',
+                    background: '#ffffff',
+                    highlight: {
+                        border: '#764ba2',
+                        background: '#f0f4ff'
+                    }
+                },
+                shadow: {
+                    enabled: true,
+                    color: 'rgba(0,0,0,0.1)',
+                    size: 5,
+                    x: 0,
+                    y: 2
+                }
+            },
+            edges: {
+                arrows: {
+                    to: {
+                        enabled: true,
+                        scaleFactor: 1.2
+                    }
+                },
+                color: {
+                    color: '#667eea',
+                    highlight: '#764ba2',
+                    opacity: 0.8
+                },
+                width: 2,
+                smooth: {
+                    type: 'cubicBezier',
+                    forceDirection: layoutDirection === "UD" ? 'vertical' : 'horizontal',
+                    roundness: 0.4
+                },
+                shadow: {
+                    enabled: true,
+                    color: 'rgba(0,0,0,0.1)',
+                    size: 3,
+                    x: 0,
+                    y: 1
+                }
+            },
+            physics: {
+                enabled: false
+            },
+            interaction: {
+                hover: true,
+                selectConnectedEdges: false,
+                tooltipDelay: 200
+            }
+        };
+
+        network = new vis.Network(container, data, options);
+
+        network.on("click", async function (params) {
+            if (params.nodes.length > 0) {
+                const clickedNodeId = params.nodes[0];
+                const eventDetailUrl = `/api/v1/events/${encodeURIComponent(clickedNodeId)}`;
+
+                try {
+                    const detailResponse = await fetch(eventDetailUrl);
+                    if (!detailResponse.ok) {
+                        document.getElementById('eventDetails').textContent = `Error fetching details for ${clickedNodeId}: ${detailResponse.status}`;
+                        return;
+                    }
+                    const eventAtom = await detailResponse.json();
+                    document.getElementById('eventDetails').textContent = JSON.stringify(eventAtom, null, 2);
+                } catch (err) {
+                    document.getElementById('eventDetails').textContent = `Error fetching details: ${err}`;
+                }
+            } else {
+                document.getElementById('eventDetails').textContent = 'Click a node in the graph to see detailed event information here.';
+            }
+        });
+
+        network.on("hoverNode", function(params) {
+            container.style.cursor = 'pointer';
+        });
+
+        network.on("blurNode", function(params) {
+            container.style.cursor = 'default';
+        });
+    }
+
+    async function fetchLatestEvents(limit = 15, historyDepth = 2) {
+        destroyNetwork();
+        nodesDataSet.clear();
+        edgesDataSet.clear();
+        document.getElementById('eventDetails').textContent = 'Click a node in the graph to see detailed event information here.';
+
+        showLoading(true);
+        const apiUrl = `/api/v1/graph/events/latest/json?limit=${limit}&historyDepth=${historyDepth}`;
+
+        try {
+            const response = await fetch(apiUrl);
+            if (!response.ok) {
+                const errorBody = await response.text();
+                showStatus(`Error: ${response.status}`, true);
+                showLoading(false);
+                return;
+            }
+
+            const graphData = await response.json();
+
+            if (!graphData.nodes || graphData.nodes.length === 0) {
+                showStatus('No recent events found', true);
+                showLoading(false);
+                return;
+            }
+
+            nodesDataSet.add(graphData.nodes);
+            edgesDataSet.add(graphData.edges);
+
+            createNetwork("LR"); // Left-to-right layout for recent events
+
+            showStatus(`Loaded ${graphData.nodes.length} recent events with ${graphData.edges.length} relationships`);
+            showLoading(false);
+
+        } catch (error) {
+            showStatus(`Failed to load recent events: ${error.message}`, true);
+            showLoading(false);
+            console.error("Error in fetchLatestEvents:", error);
+        }
+    }
+
     async function fetchAndDrawGraph(type) {
         destroyNetwork();
         nodesDataSet.clear();
@@ -405,117 +609,7 @@
             nodesDataSet.add(graphData.nodes);
             edgesDataSet.add(graphData.edges);
 
-            const container = document.getElementById('causalNetwork');
-            const data = {
-                nodes: nodesDataSet,
-                edges: edgesDataSet
-            };
-
-            const options = {
-                layout: {
-                    hierarchical: {
-                        enabled: true,
-                        direction: (type === 'ancestors') ? "UD" : "LR",
-                        sortMethod: "directed",
-                        levelSeparation: 150,
-                        nodeSpacing: 200,
-                        treeSpacing: 300
-                    }
-                },
-                nodes: {
-                    shape: 'box',
-                    margin: 15,
-                    font: {
-                        size: 14,
-                        face: 'Inter, sans-serif',
-                        color: '#333',
-                        strokeWidth: 2,
-                        strokeColor: '#ffffff'
-                    },
-                    borderWidth: 2,
-                    borderWidthSelected: 3,
-                    color: {
-                        border: '#667eea',
-                        background: '#ffffff',
-                        highlight: {
-                            border: '#764ba2',
-                            background: '#f0f4ff'
-                        }
-                    },
-                    shadow: {
-                        enabled: true,
-                        color: 'rgba(0,0,0,0.1)',
-                        size: 5,
-                        x: 0,
-                        y: 2
-                    }
-                },
-                edges: {
-                    arrows: {
-                        to: {
-                            enabled: true,
-                            scaleFactor: 1.2
-                        }
-                    },
-                    color: {
-                        color: '#667eea',
-                        highlight: '#764ba2',
-                        opacity: 0.8
-                    },
-                    width: 2,
-                    smooth: {
-                        type: 'cubicBezier',
-                        forceDirection: (type === 'ancestors') ? 'vertical' : 'horizontal',
-                        roundness: 0.4
-                    },
-                    shadow: {
-                        enabled: true,
-                        color: 'rgba(0,0,0,0.1)',
-                        size: 3,
-                        x: 0,
-                        y: 1
-                    }
-                },
-                physics: {
-                    enabled: false
-                },
-                interaction: {
-                    hover: true,
-                    selectConnectedEdges: false,
-                    tooltipDelay: 200
-                }
-            };
-
-            network = new vis.Network(container, data, options);
-
-            network.on("click", async function (params) {
-                if (params.nodes.length > 0) {
-                    const clickedNodeId = params.nodes[0];
-                    const eventDetailUrl = `/api/v1/events/${encodeURIComponent(clickedNodeId)}`;
-
-                    try {
-                        const detailResponse = await fetch(eventDetailUrl);
-                        if (!detailResponse.ok) {
-                            document.getElementById('eventDetails').textContent = `Error fetching details for ${clickedNodeId}: ${detailResponse.status}`;
-                            return;
-                        }
-                        const eventAtom = await detailResponse.json();
-                        document.getElementById('eventDetails').textContent = JSON.stringify(eventAtom, null, 2);
-                    } catch (err) {
-                        document.getElementById('eventDetails').textContent = `Error fetching details: ${err}`;
-                    }
-                } else {
-                    document.getElementById('eventDetails').textContent = 'Click a node in the graph to see detailed event information here.';
-                }
-            });
-
-            network.on("hoverNode", function(params) {
-                container.style.cursor = 'pointer';
-            });
-
-            network.on("blurNode", function(params) {
-                container.style.cursor = 'default';
-            });
+            createNetwork(type === 'ancestors' ? "UD" : "LR");
 
             showStatus(`Loaded ${graphData.nodes.length} events with ${graphData.edges.length} relationships`);
             showLoading(false);
@@ -534,9 +628,10 @@
         }
     });
 
-    // Auto-focus input on load
+    // Auto-load recent events on page load
     window.addEventListener('load', function() {
         document.getElementById('eventIdInput').focus();
+        fetchLatestEvents(); // Automatically show recent activity
     });
 </script>
 </body>
