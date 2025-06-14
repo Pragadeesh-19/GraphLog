@@ -2,6 +2,7 @@ package com.graphlog.core;
 
 import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonProperty;
+import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
@@ -24,7 +25,8 @@ public class EventAtom {
 
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper()
             .registerModule(new JavaTimeModule())
-            .disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS);
+            .disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS)
+            .configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
 
     // primary constructor for vector clock aware creation
     public EventAtom(String nodeId, String entityId, String eventType, Map<String, Object> payload, List<String> causalParentEventIds, VectorClock vectorClock) {

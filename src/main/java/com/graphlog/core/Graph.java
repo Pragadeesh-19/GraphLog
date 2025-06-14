@@ -1,6 +1,7 @@
 package com.graphlog.core;
 
 import lombok.Getter;
+import lombok.Synchronized;
 
 import java.util.*;
 
@@ -183,6 +184,37 @@ public class Graph {
         return String.format("Graph[vertices=%d, edges=%d, capacity=%d, density=%.3f]",
                 numVertices, totalEdges, capacity,
                 numVertices > 0 ? (double) totalEdges / (numVertices * numVertices) : 0.0);
+    }
+
+    public void setNumVerticesAndEnsureCapacity(int count) {
+        this.numVertices = count;
+        while (this.capacity < count) {
+            growCapacity();
+        }
+
+        while (this.adj.size() < this.capacity) {
+            this.adj.add(new ArrayList<>());
+        }
+    }
+
+    public void syncVertices(int expectedNumVertices) {
+        this.numVertices = 0;
+        for (int i =0; i< expectedNumVertices; i++) {
+            addNode();
+        }
+    }
+
+    public void ensureNodeExistsUpTo(int nodeId) {
+        while (nodeId >= this.capacity) {
+            growCapacity();
+        }
+        while (nodeId >= this.adj.size()) {
+            this.adj.add(new ArrayList<>());
+        }
+
+        if (nodeId >= this.numVertices) {
+            this.numVertices = nodeId + 1;
+        }
     }
 
     @Override
