@@ -181,9 +181,15 @@ public class Graph {
     }
 
     public String getGraphStats() {
+
+        double densityValue = 0.0;
+        if (this.numVertices > 1) {
+            densityValue = (double) this.totalEdges / ((double) this.numVertices * (double) (this.numVertices - 1));
+        } else if (this.numVertices == 1 && this.totalEdges > 0) {
+            densityValue = (double) this.totalEdges;
+        }
         return String.format("Graph[vertices=%d, edges=%d, capacity=%d, density=%.3f]",
-                numVertices, totalEdges, capacity,
-                numVertices > 0 ? (double) totalEdges / (numVertices * numVertices) : 0.0);
+                numVertices, totalEdges, capacity, densityValue);
     }
 
     public void setNumVerticesAndEnsureCapacity(int count) {
@@ -193,6 +199,10 @@ public class Graph {
         }
 
         while (this.adj.size() < this.capacity) {
+            this.adj.add(new ArrayList<>());
+        }
+
+        while (this.adj.size() < count) {
             this.adj.add(new ArrayList<>());
         }
     }
@@ -214,6 +224,23 @@ public class Graph {
 
         if (nodeId >= this.numVertices) {
             this.numVertices = nodeId + 1;
+        }
+    }
+
+    public void clearGraph() {
+        this.numVertices = 0;
+        this.totalEdges = 0;
+        this.adj.clear();
+
+        for (int i=0; i< this.capacity; i++) {
+            this.adj.add(new ArrayList<>());
+        }
+    }
+
+    public void clearEdges() {
+        this.totalEdges = 0;
+        for (List<Integer> adjList : this.adj) {
+            adjList.clear();
         }
     }
 

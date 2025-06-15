@@ -1,6 +1,10 @@
 package com.graphlog.core;
 
 import com.graphlog.interfaces.StateUpdater;
+import org.rocksdb.Options;
+import org.rocksdb.RocksDB;
+import org.rocksdb.RocksDBException;
+import org.rocksdb.RocksIterator;
 
 import java.io.*;
 import java.nio.charset.StandardCharsets;
@@ -30,6 +34,9 @@ public class CausalLedger {
     private final String localNodeId = "GRAPH_NODE_01";
 
     private final Map<String, StateUpdater<Map<String, Object>>> stateUpdaters = new ConcurrentHashMap<>();
+
+    private final RocksDB eventStoreDb;
+    private final Path rocksDbPath;
 
     private final String logFilePath;
     private final Path dataDirectoryPath;
@@ -64,27 +71,185 @@ public class CausalLedger {
 
         Path logPath = Paths.get(logFilePath);
         this.dataDirectoryPath = (logPath.getParent() != null) ? logPath.getParent() : Paths.get(".");
+        this.rocksDbPath = this.dataDirectoryPath.resolve("event_store_rocksdb");
 
         if (this.dataDirectoryPath != null) {
             try {
                 Files.createDirectories(this.dataDirectoryPath);
+                Files.createDirectories(this.rocksDbPath);
             } catch (IOException e) {
-                throw new PersistenceException("Failed to create data directory: " + this.dataDirectoryPath, e);
+                throw new PersistenceException("Failed to create data directory: " + this.rocksDbPath, e);
             }
         }
 
-        registerDefaultStateUpdaters();
+        RocksDB.loadLibrary();
+        Options options = new Options().setCreateIfMissing(true);
+        try {
+            this.eventStoreDb = RocksDB.open(options, this.rocksDbPath.toString());
+            System.out.println("RocksDB event store initialized at: " + this.rocksDbPath);
+        } catch (RocksDBException e) {
+            throw new PersistenceException("Failed to INitialize RocksDB event store", e);
+        }
 
-        boolean indexesLoaded = loadAllIndexes();
-        loadEventsFromLog(indexesLoaded);
+        registerDefaultStateUpdaters();
+        loadStateFromPersistence();
 
         System.out.println("CausalLedger initialized: " + getStats());
 
-        Runtime.getRuntime().addShutdownHook(new Thread(this::saveAllIndexes));
+        Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+            saveAllIndexes();
+            if (this.eventStoreDb != null) {
+                this.eventStoreDb.close();
+                System.out.println("RocksDB event store closed");
+            }
+        }));
     }
 
     public CausalLedger(String logFilePath) {
         this(logFilePath, 1000);
+    }
+
+    private void loadStateFromPersistence() {
+        boolean indexesLoadedFromFiles = loadAllIndexes();
+
+        List<EventAtom> eventsFromLog = null;
+
+        if (!indexesLoadedFromFiles) {
+            System.out.println("Indexes not found. Proceeding with full log processing for RocksDB hydration and index building");
+            eventsFromLog = hydrateRocksDBAndCollectEvents();
+            rebuildInMemoryGraphStructures(eventsFromLog, false);
+        } else {
+            System.out.println("Indexes loaded successfully. Skipping full log scan - using preloaded indexes for graph reconstruction");
+            ensureRocksDBIsAccessible();
+            rebuildInMemoryGraphStructures(Collections.emptyList(), true);
+        }
+    }
+
+    private List<EventAtom> hydrateRocksDBAndCollectEvents() {
+        Path logPath = Paths.get(logFilePath);
+        List<EventAtom> allEventsFromLog = new ArrayList<>();
+
+        if (!Files.exists(logPath)) {
+            System.out.println("Event log file doesn't exist: " + logFilePath);
+            return allEventsFromLog;
+        }
+
+        System.out.println("Processing event log for RocksDB hydration: "+ logFilePath);
+
+        try (BufferedReader reader = Files.newBufferedReader(logPath, StandardCharsets.UTF_8)){
+            String line;
+            int lineNumber = 0;
+
+            while ((line = reader.readLine()) != null) {
+                lineNumber++;
+                line = line.trim();
+
+                if (line.isEmpty()) {
+                    continue;
+                }
+
+                try {
+                    EventAtom event = EventAtom.fromLogString(line);
+                    allEventsFromLog.add(event);
+
+                    byte[] eventIdBytes = event.getEventId().getBytes(StandardCharsets.UTF_8);
+                    byte[] eventJsonBytes = line.getBytes(StandardCharsets.UTF_8);
+                    eventStoreDb.put(eventIdBytes, eventJsonBytes);
+
+                } catch (Exception e) {
+                    System.err.println("Corrupt event line \" + lineNumber + \" in log during RocksDB hydration, skipping: \" + line + \" - \" + e.getMessage()");
+                }
+            }
+        } catch (IOException e) {
+            throw new PersistenceException("Failed during log processing/RocksDB hydration", e);
+        }
+        System.out.println("RocksDB hydration completed. Events processed: " + allEventsFromLog.size());
+        return allEventsFromLog;
+    }
+
+    private void ensureRocksDBIsAccessible() {
+        try {
+            RocksIterator iterator = eventStoreDb.newIterator();
+            iterator.seekToFirst();
+            if (iterator.isValid()) {
+                System.out.println("RocksDB is accessible and contains data");
+            } else {
+                System.out.println("RocksDB is accessible but appears empty");
+            }
+            iterator.close();
+        } catch (Exception e) {
+            System.err.println("warning: RocksDB accessibility check failed: " + e.getMessage());
+        }
+    }
+
+    private void rebuildInMemoryGraphStructures(List<EventAtom> allEvents, boolean indexesWerePreLoaded) {
+        if (!indexesWerePreLoaded) {
+            // cold path
+            if (allEvents.isEmpty()) {
+                return;
+            }
+
+            eventIdToGraphId.clear();
+            graphIdToEventId.clear();
+            entityToEventIdsIndex.clear();
+            childrenAdjacencyList.clear();
+            causalGraph.clearGraph();
+
+            for (EventAtom event : allEvents) {
+                int graphNodeId = causalGraph.addNode();
+                eventIdToGraphId.put(event.getEventId(), graphNodeId);
+                graphIdToEventId.put(graphNodeId, event.getEventId());
+                entityToEventIdsIndex.computeIfAbsent(event.getEntityId(), k -> new ArrayList<>()).add(event.getEventId());
+            }
+
+            causalGraph.clearEdges();
+            for (EventAtom event : allEvents) {
+                Integer effectGraphId = eventIdToGraphId.get(event.getEventId());
+                if (effectGraphId == null) {
+                    throw new PersistenceException("Consistency error: Event " + event.getEventId() + " not found in ID mappings during graph rebuild", null);
+                }
+
+                for (String parentEventId : event.getCausalParentEventIds()) {
+                    Integer causeGraphId = eventIdToGraphId.get(parentEventId);
+                    if (causeGraphId == null) {
+                        System.err.println("Persistence Error: Parent " + parentEventId + " for event " + event.getEventId() + " not found in mappings during edge rebuild.");
+                        continue;
+                    }
+
+                    causalGraph.addDirectedEdge(effectGraphId, causeGraphId);
+                    childrenAdjacencyList.computeIfAbsent(causeGraphId, k -> new ArrayList<>()).add(effectGraphId);
+                }
+            }
+
+            System.out.println("All indexes and graph structure rebuilt from " + allEvents.size() + " events");
+        } else {
+            // warm path
+            int maxGraphId = determineMaxGraphIdFromMappings();
+            if (maxGraphId >= 0) {
+                causalGraph.setNumVerticesAndEnsureCapacity(maxGraphId +1 );
+            }
+            causalGraph.clearEdges();
+
+            for (Map.Entry<Integer, List<Integer>> entry : childrenAdjacencyList.entrySet()) {
+                Integer causeGraphId = entry.getKey();
+                List<Integer> childGraphIds = entry.getValue();
+
+                for (Integer effectGraphId : childGraphIds) {
+                    causalGraph.addDirectedEdge(effectGraphId, causeGraphId);
+                }
+            }
+
+            System.out.println("Graph structure rebuilt from pre-loaded indexes (" +
+                    eventIdToGraphId.size() + " events, " +
+                    childrenAdjacencyList.size() + " parent nodes with children). No log processing required.");
+        }
+    }
+
+    private int determineMaxGraphIdFromMappings() {
+        if (eventIdToGraphId.isEmpty()) {
+            return -1;
+        }
+        return eventIdToGraphId.values().stream().max(Integer::compareTo).orElse(-1);
     }
 
     private Path getIndexFilePath(String fileName) {
@@ -106,8 +271,6 @@ public class CausalLedger {
                 }
             } catch (IOException | ClassNotFoundException | ClassCastException e) {
                 System.err.println("Warning: Failed to load index from " + fileName + " (" + e.getMessage() + "). Rebuilding index.");
-                // Optionally delete the corrupt index file
-                // try { Files.deleteIfExists(indexFile); } catch (IOException ex) {}
             }
         }
         return null; // Indicate index was not loaded
@@ -137,7 +300,6 @@ public class CausalLedger {
         if (tempEntityIndex != null && tempChildrenAdj != null &&
                 tempEventToGraph != null && tempGraphToEvent != null) {
 
-            // Clear and putAll into the final ConcurrentHashMap fields to ensure correct instance types
             this.entityToEventIdsIndex.clear();
             this.entityToEventIdsIndex.putAll(tempEntityIndex);
 
@@ -422,8 +584,13 @@ public class CausalLedger {
         rwLock.writeLock().lock();
         try {
             for (String parentId : causalParentEventIds) {
-                if (!eventStoreById.containsKey(parentId)) {
-                    throw new UnknownParentException("Parent event " + parentId + " not found in ledger");
+                try {
+                    byte[] parentBytes = eventStoreDb.get(parentId.getBytes(StandardCharsets.UTF_8));
+                    if (parentBytes == null) {
+                        throw new UnknownParentException("Parent event " + parentId + " not found in ledger ");
+                    }
+                } catch (RocksDBException e) {
+                    throw new PersistenceException("Failed to check parent event " + parentId, e);
                 }
             }
 
@@ -459,14 +626,23 @@ public class CausalLedger {
             EventAtom newEvent = vcManager.createEvent(entityId, eventType, payload, causalParentEventIds);
             String eventId = newEvent.getEventId();
 
-            eventStoreById.put(eventId, newEvent);
+            appendEventToLog(newEvent);
+
+            try {
+                String eventJson = newEvent.toLogString();
+                byte[] eventIdBytes = eventId.getBytes(StandardCharsets.UTF_8);
+                byte[] eventJsonBytes = eventJson.getBytes(StandardCharsets.UTF_8);
+                eventStoreDb.put(eventIdBytes, eventJsonBytes);
+            } catch (RocksDBException e) {
+                System.err.println("Failed to persist event " + eventId + " to rocksDB after log write. System inconsistent until restart");
+                throw new PersistenceException("Failed to persist event " + eventId + " to rocksDB", e);
+            }
+
             eventIdToGraphId.put(eventId, newGraphNodeId);
             graphIdToEventId.put(newGraphNodeId, eventId);
 
             String entityIdForIndex = newEvent.getEntityId();
             this.entityToEventIdsIndex.computeIfAbsent(entityIdForIndex, k -> new ArrayList<>()).add(eventId);
-
-            appendEventToLog(newEvent);
 
             totalEventsIngested++;
 
@@ -777,7 +953,27 @@ public class CausalLedger {
     public EventAtom getEvent(String eventId) {
         rwLock.readLock().lock();
         try {
-            return eventStoreById.get(eventId);
+            byte[] eventIdBytes = eventId.getBytes(StandardCharsets.UTF_8);
+            byte[] eventJsonBytes;
+
+            try {
+                eventJsonBytes = eventStoreDb.get(eventIdBytes);
+            } catch (RocksDBException e) {
+                System.err.println("RocksDB error getting event " + eventId + ": " + e.getMessage());
+                return null;
+            }
+
+            if (eventJsonBytes == null) {
+                return null;
+            }
+
+            try {
+                String eventJson = new String(eventJsonBytes, StandardCharsets.UTF_8);
+                return EventAtom.fromLogString(eventJson);
+            } catch (Exception e) {
+                System.err.println("Error deserializing event " + eventId + " from RocksDB: " + e.getMessage());
+                return null;
+            }
         } finally {
             rwLock.readLock().unlock();
         }
@@ -884,7 +1080,7 @@ public class CausalLedger {
     public int getEventCount() {
         rwLock.readLock().lock();
         try {
-            return eventStoreById.size();
+            return eventIdToGraphId.size();
         } finally {
             rwLock.readLock().unlock();
         }
@@ -907,7 +1103,7 @@ public class CausalLedger {
         try {
             return String.format(
                     "CausalLedger[events=%d, ingested=%d, cycleChecks=%d, cyclesPrevented=%d, graph=%s, nodeId='%s', vectorClock='%s', logFile='%s']",
-                    eventStoreById.size(), totalEventsIngested, totalCycleChecks, totalCyclesPrevented,
+                    eventIdToGraphId.size(), totalEventsIngested, totalCycleChecks, totalCyclesPrevented,
                     causalGraph.getGraphStats(), localNodeId, vcManager.getCurrentClock(), logFilePath);
         } finally {
             rwLock.readLock().unlock();

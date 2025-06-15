@@ -20,7 +20,6 @@ public class EventLogGenerator {
     public static void main(String[] args) {
         System.out.println("Generating large event log at: " + TEST_LOG_PATH);
 
-        // Ensure directory exists, handle potential deletion of old files for clean gen
         try {
             Path path = Paths.get(TEST_LOG_PATH);
             if (Files.exists(path)) Files.delete(path); // Clean previous
@@ -76,12 +75,6 @@ public class EventLogGenerator {
         System.out.println("Finished generating events. Total time: " + (endTime - startTime) + " ms");
         System.out.println("Final Ledger Stats: " + ledger.getStats());
 
-        // Important: Shutdown hook will save indexes. Or call a public save method if you add one.
-        // To ensure indexes are saved from *this* generator run before it exits:
-        // if (ledger instanceof CausalLedger) { // Assuming you add this method
-        //    ((CausalLedger)ledger).saveAllIndexesPublicForTest();
-        // }
-        // Or just let the shutdown hook do its work.
         System.out.println("Generator finished. Exiting to allow shutdown hook to save indexes.");
     }
 }

@@ -16,6 +16,7 @@ public class StartupProfiler {
             "event_to_graph_id.idx", "graph_to_event_id.idx"
     };
 
+
     public static void main(String[] args) {
         if (args.length != 1) {
             System.out.println("Usage: java StartupProfiler [cold|warm]");
