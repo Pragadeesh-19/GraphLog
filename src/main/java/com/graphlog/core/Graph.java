@@ -1,7 +1,6 @@
 package com.graphlog.core;
 
 import lombok.Getter;
-import lombok.Synchronized;
 
 import java.util.*;
 
@@ -27,6 +26,7 @@ public class Graph {
     /**
      * Copy constructor for creating temporary graphs (used in cycle detection)
      */
+    @Deprecated
     public Graph(Graph other) {
         this.numVertices = other.numVertices;
         this.capacity = other.capacity;
@@ -38,7 +38,6 @@ public class Graph {
             this.adj.add(new ArrayList<>(other.adj.get(i)));
         }
 
-        // Fill remaining capacity if needed
         for (int i = other.adj.size(); i < this.capacity; i++) {
             this.adj.add(new ArrayList<>());
         }
@@ -98,6 +97,69 @@ public class Graph {
             }
         }
         recursionStack[u] = false;
+        return false;
+    }
+
+    private boolean isCyclicUtilWithHypotheticalEdges(int u, boolean[] visited, boolean[] recursionStack, Map<Integer, List<Integer>> hypotheticalNewEdges) {
+
+        if (recursionStack[u]) {
+            return true;
+        }
+        if (visited[u]) {
+            return false;
+        }
+
+        visited[u] = true;
+        recursionStack[u] = true;
+
+        if (u < numVertices) {
+            for (int neighbour : adj.get(u)) {
+                if (isCyclicUtilWithHypotheticalEdges(neighbour, visited, recursionStack, hypotheticalNewEdges)) {
+                    return true;
+                }
+            }
+        }
+
+        if (hypotheticalNewEdges.containsKey(u)) {
+            for (int neighbour : hypotheticalNewEdges.get(u)) {
+                if (isCyclicUtilWithHypotheticalEdges(neighbour, visited, recursionStack, hypotheticalNewEdges)) {
+                    return true;
+                }
+            }
+        }
+
+        recursionStack[u] = false;
+        return false;
+    }
+
+    public boolean hasCycleWithProposedAdditions(int proposedNodeId, Map<Integer, List<Integer>> hypotheticalNewEdges) {
+        if (hypotheticalNewEdges.isEmpty()) {
+            return hasCycle();
+        }
+
+        int maxVertexId = Math.max(proposedNodeId, numVertices - 1);
+        for (Map.Entry<Integer, List<Integer>> entry : hypotheticalNewEdges.entrySet()) {
+            maxVertexId = Math.max(maxVertexId, entry.getKey());
+            for (int target : entry.getValue()) {
+                maxVertexId = Math.max(maxVertexId, target);
+            }
+        }
+
+        // Create arrays sized to accommodate the hypothetical vertex
+        boolean[] visited = new boolean[maxVertexId + 1];
+        boolean[] recursionStack = new boolean[maxVertexId + 1];
+
+        if (isCyclicUtilWithHypotheticalEdges(proposedNodeId, visited, recursionStack, hypotheticalNewEdges)) {
+            return true;
+        }
+
+        // Also check all existing vertices (in case the hypothetical edges create cycles elsewhere)
+        for (int i = 0; i < numVertices; i++) {
+            if (!visited[i] && isCyclicUtilWithHypotheticalEdges(i, visited, recursionStack, hypotheticalNewEdges)) {
+                return true;
+            }
+        }
+
         return false;
     }
 
