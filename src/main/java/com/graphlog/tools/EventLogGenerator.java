@@ -8,7 +8,6 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.time.Instant;
 import java.util.Collections;
-import java.util.List;
 import java.util.Map;
 
 public class EventLogGenerator {
@@ -31,6 +30,8 @@ public class EventLogGenerator {
             Files.deleteIfExists(parentDir.resolve("children_adjacency.idx"));
             Files.deleteIfExists(parentDir.resolve("event_to_graph_id.idx"));
             Files.deleteIfExists(parentDir.resolve("graph_to_event_id.idx"));
+            Files.deleteIfExists(parentDir.resolve("event_type_to_event_ids.idx"));
+            Files.deleteIfExists(parentDir.resolve("trace_id_to_event_ids.idx"));
 
         } catch (IOException e) {
             e.printStackTrace();
@@ -41,20 +42,24 @@ public class EventLogGenerator {
         long startTime = System.currentTimeMillis();
 
         for (int i = 0; i < NUM_ENTITIES; i++) {
-            String entityId = "entity-" + i;
+            String entityId = "entity-" + i; // this becomes traceId
             String lastEventIdInChain = null;
 
             for (int j = 0; j < EVENTS_PER_ENTITY_CHAIN; j++) {
                 String eventType = (j == 0) ? "ENTITY_CREATED" : "ENTITY_UPDATED_" + j;
-                List<String> parents = (lastEventIdInChain == null) ?
-                        Collections.emptyList() : List.of(lastEventIdInChain);
+
                 try {
-                    lastEventIdInChain = ledger.ingestEvent(
-                            entityId,
-                            eventType,
-                            Map.of("value", j, "entitySuffix", i, "timestamp", Instant.now().toString()),
-                            parents
+                    String newEventId = ledger.ingestEvent(
+                            entityId,                    // traceId
+                            "EntityService",             // serviceName
+                            "1.0.0",                     // serviceVersion
+                            "localhost",                 // hostname
+                            eventType,                   // eventType
+                            Map.of("value", j, "entitySuffix", i, "timestamp", Instant.now().toString()), // payload
+                            Collections.emptyList()      // manualParentEventIds - EMPTY to test automatic linking
                     );
+
+                    lastEventIdInChain = newEventId;
 
                     if ((j + 1) % 1000 == 0) { // Log progress
                         System.out.println("Entity " + i + ": Ingested " + (j + 1) + " events. Last ID: " + lastEventIdInChain);

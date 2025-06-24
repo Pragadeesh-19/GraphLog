@@ -13,7 +13,8 @@ public class StartupProfiler {
     private static final String TEST_LOG_PATH = "data_large/events.log"; // Same as generator
     private static final String[] INDEX_FILES = {
             "entity_to_event_ids.idx", "children_adjacency.idx",
-            "event_to_graph_id.idx", "graph_to_event_id.idx"
+            "event_to_graph_id.idx", "graph_to_event_id.idx",
+            "event_type_to_event_ids.idx", "trace_id_to_event_ids.idx"
     };
 
 

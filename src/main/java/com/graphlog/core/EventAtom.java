@@ -11,13 +11,15 @@ import lombok.Data;
 import java.time.Instant;
 import java.util.*;
 
-@Data
 public class EventAtom {
 
     private final String eventId;
     private final Instant timestamp;
     private final String nodeId;
-    private final String entityId;
+    private final String serviceName;
+    private final String traceId;
+    private final String serviceVersion;
+    private final String hostname;
     private final String eventType;
     private final Map<String, Object> payload;
     private final List<String> causalParentEventIds;
@@ -29,11 +31,14 @@ public class EventAtom {
             .configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
 
     // primary constructor for vector clock aware creation
-    public EventAtom(String nodeId, String entityId, String eventType, Map<String, Object> payload, List<String> causalParentEventIds, VectorClock vectorClock) {
+    public EventAtom(String nodeId, String traceId, String serviceName, String serviceVersion, String hostname, String eventType, Map<String, Object> payload, List<String> causalParentEventIds, VectorClock vectorClock) {
         this.eventId = UUID.randomUUID().toString();
         this.timestamp = Instant.now();
         this.nodeId = nodeId;
-        this.entityId = entityId;
+        this.traceId = traceId;
+        this.serviceName = serviceName;
+        this.serviceVersion = serviceVersion;
+        this.hostname = hostname;
         this.eventType = eventType;
         this.payload = Collections.unmodifiableMap(new HashMap<>(payload));
         this.causalParentEventIds = Collections.unmodifiableList(new ArrayList<>(causalParentEventIds));
@@ -41,15 +46,18 @@ public class EventAtom {
     }
 
     // Legacy constructor for backward compatibility, defaults to single node
-    public EventAtom(String entityId, String eventType, Map<String, Object> payload, List<String> causalParentEventIds) {
+    public EventAtom(String nodeId, String entityId, String eventType, Map<String, Object> payload, List<String> causalParentEventIds, VectorClock vectorClock) {
         this.eventId = UUID.randomUUID().toString();
         this.timestamp = Instant.now();
-        this.nodeId = "default-node"; // Default node for single-node operation
-        this.entityId = entityId;
+        this.nodeId = nodeId;
+        this.traceId = "unknown-trace"; // Default for legacy
+        this.serviceName = entityId; // Map old entityId to serviceName
+        this.serviceVersion = "unknown-version"; // Default
+        this.hostname = "unknown-hostname"; // Default
         this.eventType = eventType;
         this.payload = Collections.unmodifiableMap(new HashMap<>(payload != null ? payload : Collections.emptyMap()));
         this.causalParentEventIds = Collections.unmodifiableList(new ArrayList<>(causalParentEventIds != null ? causalParentEventIds : Collections.emptyList()));
-        this.vectorClock = new VectorClock(); // Empty vector clock for backward compatibility
+        this.vectorClock = (vectorClock != null) ? new VectorClock(vectorClock) : new VectorClock();
     }
 
     @JsonCreator
@@ -57,20 +65,38 @@ public class EventAtom {
             @JsonProperty("eventId") String eventId,
             @JsonProperty("timestamp") Instant timestamp,
             @JsonProperty("nodeId") String nodeId,
-            @JsonProperty("entityId") String entityId,
+            @JsonProperty("serviceName") String serviceName,
+            @JsonProperty("traceId") String traceId,
+            @JsonProperty("serviceVersion") String serviceVersion,
+            @JsonProperty("hostname") String hostname,
             @JsonProperty("eventType") String eventType,
             @JsonProperty("payload") Map<String, Object> payload,
             @JsonProperty("causalParentEventIds") List<String> causalParentEventIds,
-            @JsonProperty("vectorClock") VectorClock vectorClock) {
+            @JsonProperty("vectorClock") VectorClock vectorClock,
+            @JsonProperty("entityId") String entityId) {
         this.eventId = eventId;
         this.timestamp = timestamp;
         this.nodeId = nodeId != null ? nodeId : "default-node";
-        this.entityId = entityId;
+        this.traceId = traceId != null ? traceId : "unknown-trace";
+        this.serviceName = serviceName != null ? serviceName : (entityId != null ? entityId : "unknown-service");
+        this.serviceVersion = serviceVersion != null ? serviceVersion : "unknown-version";
+        this.hostname = hostname != null ? hostname : "unknown-hostname";
         this.eventType = eventType;
         this.payload = Collections.unmodifiableMap(new HashMap<>(payload != null ? payload : new HashMap<>()));
         this.causalParentEventIds = Collections.unmodifiableList(new ArrayList<>(causalParentEventIds != null ? causalParentEventIds : new ArrayList<>()));
         this.vectorClock = vectorClock != null ? new VectorClock(vectorClock) : new VectorClock();
     }
+
+    public String getEventId() { return eventId; }
+    public Instant getTimestamp() { return timestamp; }
+    public String getNodeId() { return nodeId; }
+    public String getServiceName() { return serviceName; }
+    public String getTraceId() { return traceId; }
+    public String getServiceVersion() { return serviceVersion; }
+    public String getHostname() { return hostname; }
+    public String getEventType() { return eventType; }
+    public Map<String, Object> getPayload() { return payload; }
+    public List<String> getCausalParentEventIds() { return causalParentEventIds; }
 
     public VectorClock getVectorClock() {
         return new VectorClock(this.vectorClock);
@@ -178,7 +204,10 @@ public class EventAtom {
                 "eventId='" + eventId + '\'' +
                 ", timestamp=" + timestamp +
                 ", nodeId='" + nodeId + '\'' +
-                ", entityId='" + entityId + '\'' +
+                ", serviceName='" + serviceName + '\'' +
+                ", traceId='" + traceId + '\'' +
+                ", serviceVersion='" + serviceVersion + '\'' +
+                ", hostname='" + hostname + '\'' +
                 ", eventType='" + eventType + '\'' +
                 ", payload=" + payload +
                 ", causalParentEventIds=" + causalParentEventIds +

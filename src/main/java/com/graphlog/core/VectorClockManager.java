@@ -24,20 +24,27 @@ public class VectorClockManager {
     }
 
     /**
-     * Create a new event with proper vector clock
+     * Create a new event with proper vector clock for trace-aware distributed systems
      * This should be called when creating events locally
      *
-     * @param entityId The entity this event relates to
+     * @param traceId The unique ID for the entire request/trace flow
+     * @param serviceName The name of the service emitting this event
+     * @param serviceVersion The version of the service
+     * @param hostname The hostname of the service instance
      * @param eventType The type of event being created
      * @param payload The event payload data
      * @param causalParentEventIds List of event IDs that this event causally depends on
      * @return A new EventAtom with proper vector clock timestamp
      */
-    public synchronized EventAtom createEvent(String entityId, String eventType,
-                                              Map<String, Object> payload,
+    public synchronized EventAtom createEvent(String traceId, String serviceName,
+                                              String serviceVersion, String hostname,
+                                              String eventType, Map<String, Object> payload,
                                               java.util.List<String> causalParentEventIds) {
-        if (entityId == null || entityId.trim().isEmpty()) {
-            throw new IllegalArgumentException("Entity ID cannot be null or empty");
+        if (traceId == null || traceId.trim().isEmpty()) {
+            throw new IllegalArgumentException("Trace ID cannot be null or empty");
+        }
+        if (serviceName == null || serviceName.trim().isEmpty()) {
+            throw new IllegalArgumentException("Service name cannot be null or empty");
         }
         if (eventType == null || eventType.trim().isEmpty()) {
             throw new IllegalArgumentException("Event type cannot be null or empty");
@@ -54,11 +61,14 @@ public class VectorClockManager {
 
         return new EventAtom(
                 this.localNodeId,        // The node ID where the event originates
-                entityId,
-                eventType,
-                payload,
+                traceId,                 // The trace this event belongs to
+                serviceName,             // The service emitting the event
+                serviceVersion,          // The service version
+                hostname,                // The hostname/pod of the service instance
+                eventType,               // The type of event
+                payload,                 // The event data
                 causalParentEventIds != null ? causalParentEventIds : new ArrayList<>(),
-                eventVectorClock         // The timestamp of the event
+                eventVectorClock
         );
     }
 

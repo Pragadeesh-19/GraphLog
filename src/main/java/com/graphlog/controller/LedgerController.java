@@ -8,7 +8,9 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.servlet.support.ServletUriComponentsBuilder;
 
+import java.net.URI;
 import java.util.*;
 
 @RestController
@@ -19,28 +21,62 @@ public class LedgerController {
     private final CausalLedger ledger;
 
     @PostMapping("/events")
-    public ResponseEntity<?> ingestNewEvent(@RequestBody IngestEventRequest request) {
+    public ResponseEntity<?> ingestTraceEvent(@RequestBody IngestTraceEventRequest request) {
         try {
-            String eventId = ledger.ingestEvent(
-                    request.entityId,
-                    request.eventType,
-                    request.payload,
-                    request.causalParentEventIds
-            );
-            EventAtom createdEvent = ledger.getEvent(eventId);
-            if (createdEvent != null) {
-                return ResponseEntity.status(HttpStatus.CREATED).body(createdEvent);
-            } else {
-                return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body("Error retrieving created event");
+            if (request.traceId == null || request.traceId.trim().isEmpty()) {
+                return ResponseEntity.status(HttpStatus.BAD_REQUEST).body("Field 'traceId' is required and cannot be empty.");
             }
+            if (request.serviceName == null || request.serviceName.trim().isEmpty()) {
+                return ResponseEntity.status(HttpStatus.BAD_REQUEST).body("Field 'serviceName' is required and cannot be empty.");
+            }
+            if (request.eventType == null || request.eventType.trim().isEmpty()) {
+                return ResponseEntity.status(HttpStatus.BAD_REQUEST).body("Field 'eventType' is required and cannot be empty.");
+            }
+
+            String serviceVersion = request.serviceVersion != null ? request.serviceVersion : "unknown";
+            String hostname = request.hostname != null ? request.hostname : "unknown";
+            List<String> parents = request.manualParentEventIds != null ? request.manualParentEventIds : Collections.emptyList();
+            Map<String, Object> payload = request.payload != null ? request.payload : Collections.emptyMap();
+
+            String newEventId = ledger.ingestEvent(
+                    request.traceId,
+                    request.serviceName,
+                    serviceVersion,
+                    hostname,
+                    request.eventType,
+                    payload,
+                    parents
+            );
+
+            EventAtom createdEvent = ledger.getEvent(newEventId);
+            URI location = ServletUriComponentsBuilder.fromCurrentRequest()
+                    .path("/{id}")
+                    .buildAndExpand(newEventId)
+                    .toUri();
+
+            return ResponseEntity.created(location).body(createdEvent);
         } catch (CausalLedger.UnknownParentException e) {
-            return ResponseEntity.status(HttpStatus.BAD_REQUEST).body("Error: " + e.getMessage());
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                    .body("Unknown parent event: " + e.getMessage());
         } catch (CausalLedger.CausalLoopException e) {
-            return ResponseEntity.status(HttpStatus.CONFLICT).body("Error: " + e.getMessage());
+            return ResponseEntity.status(HttpStatus.CONFLICT)
+                    .body("Causal loop detected: " + e.getMessage());
+        } catch (IllegalArgumentException e){
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST).body("Invalid argument: " + e.getMessage());
         } catch (Exception e) {
             e.printStackTrace();
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body("An unexpected error occurred: " + e.getMessage());
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body("Internal server error: " + e.getMessage());
         }
+    }
+
+    @GetMapping("/traces/{traceId}")
+    public ResponseEntity<List<EventAtom>> getEventsByTraceId(@PathVariable String traceId) {
+        List<EventAtom> events = ledger.getEventsByTraceId(traceId);
+        if (events.isEmpty()) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND).body(Collections.emptyList());
+        }
+        return ResponseEntity.ok(events);
     }
 
     @GetMapping("/events/{eventId}")
@@ -136,7 +172,7 @@ public class LedgerController {
                 if (event != null) {
                     String shortId = event.getEventId().substring(0, Math.min(event.getEventId().length(), 8));
                     String label = event.getEventType(); // Or more complex label
-                    String title = String.format("Type: %s\nEntity: %s\nID: %s", event.getEventType(), event.getEntityId(), event.getEventId());
+                    String title = String.format("Type: %s\nEntity: %s\nID: %s", event.getEventType(), event.getServiceName(), event.getEventId());
                     String group = event.getEventType(); // Group by event type for Vis.js styling
 
                     nodes.add(new GraphNode(event.getEventId(), label, title, group));
@@ -199,7 +235,7 @@ public class LedgerController {
                 if (event != null) {
                     String shortId = event.getEventId().substring(0, Math.min(event.getEventId().length(), 8));
                     String label = event.getEventType();
-                    String title = String.format("Type: %s\nEntity: %s\nID: %s", event.getEventType(), event.getEntityId(), event.getEventId());
+                    String title = String.format("Type: %s\nEntity: %s\nID: %s", event.getEventType(), event.getServiceName(), event.getEventId());
                     String group = event.getEventType();
 
                     nodes.add(new GraphNode(event.getEventId(), label, title, group));
@@ -267,7 +303,7 @@ public class LedgerController {
                     eventMap.put(currentEventId, event);
                     String label = String.format("%s\\n(%s)\\nID:%.8s",
                             event.getEventType().replace("\"", "\\\""),
-                            event.getEntityId().replace("\"", "\\\""),
+                            event.getServiceName().replace("\"", "\\\""),
                             event.getEventId());
                     dotBuilder.append(String.format("    \"%s\" [label=\"%s\"];\n", event.getEventId(), label));
                 }
@@ -329,7 +365,7 @@ public class LedgerController {
                     eventMap.put(currentEventId, event);
                     String label = String.format("%s\\n(%s)\\nID:%.8s",
                             event.getEventType().replace("\"", "\\\""),
-                            event.getEntityId().replace("\"", "\\\""),
+                            event.getServiceName().replace("\"", "\\\""),
                             event.getEventId());
                     dotBuilder.append(String.format("    \"%s\" [label=\"%s\"];\n", event.getEventId(), label));
                 }
@@ -420,7 +456,7 @@ public class LedgerController {
                 EventAtom event = ledger.getEvent(eventIdFromSet);
                 if (event != null) {
                     String label = event.getEventType();
-                    String title = String.format("Type: %s\nEntity: %s\nID: %s", event.getEventType(), event.getEntityId(), event.getEventId());
+                    String title = String.format("Type: %s\nEntity: %s\nID: %s", event.getEventType(), event.getServiceName(), event.getEventId());
                     String group = event.getEventType();
                     nodes.add(new GraphNode(event.getEventId(), label, title, group));
                 }
