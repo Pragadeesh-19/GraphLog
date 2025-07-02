@@ -23,23 +23,11 @@ public class VectorClockManager {
         this.nodeClocks.put(localNodeId, new VectorClock(localClock));
     }
 
-    /**
-     * Create a new event with proper vector clock for trace-aware distributed systems
-     * This should be called when creating events locally
-     *
-     * @param traceId The unique ID for the entire request/trace flow
-     * @param serviceName The name of the service emitting this event
-     * @param serviceVersion The version of the service
-     * @param hostname The hostname of the service instance
-     * @param eventType The type of event being created
-     * @param payload The event payload data
-     * @param causalParentEventIds List of event IDs that this event causally depends on
-     * @return A new EventAtom with proper vector clock timestamp
-     */
-    public synchronized EventAtom createEvent(String traceId, String serviceName,
-                                              String serviceVersion, String hostname,
-                                              String eventType, Map<String, Object> payload,
-                                              java.util.List<String> causalParentEventIds) {
+    public synchronized EventAtom createEvent(
+            String traceId, String serviceName, String serviceVersion, String hostname,
+            String eventType, Map<String, Object> payload,
+            List<EventAtom> parentEvents) {
+
         if (traceId == null || traceId.trim().isEmpty()) {
             throw new IllegalArgumentException("Trace ID cannot be null or empty");
         }
@@ -50,25 +38,30 @@ public class VectorClockManager {
             throw new IllegalArgumentException("Event type cannot be null or empty");
         }
 
-        // 1. Current node performs an action, so increment its logical clock
-        this.localClock.tick(this.localNodeId);
+        VectorClock newClock = new VectorClock(this.localClock);
 
-        // 2. Create the event with a COPY of the current local vector clock
-        VectorClock eventVectorClock = new VectorClock(this.localClock);
+        List<String> parentEventIds = new ArrayList<>();
+        if (parentEvents != null && !parentEvents.isEmpty()) {
+            for (EventAtom parent : parentEvents) {
+                newClock.update(parent.getVectorClock());
+                parentEventIds.add(parent.getEventId());
+            }
+        }
 
-        // 3. Update our record of local clock
+        newClock.tick(this.localNodeId);
+        this.localClock.update(newClock);
         this.nodeClocks.put(localNodeId, new VectorClock(localClock));
 
         return new EventAtom(
-                this.localNodeId,        // The node ID where the event originates
-                traceId,                 // The trace this event belongs to
-                serviceName,             // The service emitting the event
-                serviceVersion,          // The service version
-                hostname,                // The hostname/pod of the service instance
-                eventType,               // The type of event
-                payload,                 // The event data
-                causalParentEventIds != null ? causalParentEventIds : new ArrayList<>(),
-                eventVectorClock
+                this.localNodeId,
+                traceId,
+                serviceName,
+                serviceVersion,
+                hostname,
+                eventType,
+                payload,
+                parentEventIds,
+                newClock
         );
     }
 
@@ -87,10 +80,8 @@ public class VectorClockManager {
             throw new IllegalArgumentException("Cannot receive event without vector clock");
         }
 
-        // 1. Update local clock with the knowledge from the received event's clock
         this.localClock.update(eventFromOtherNode.getVectorClock(), this.localNodeId);
 
-        // 2. Update our records of node clocks
         this.nodeClocks.put(localNodeId, new VectorClock(localClock));
         this.nodeClocks.put(eventFromOtherNode.getNodeId(),
                 new VectorClock(eventFromOtherNode.getVectorClock()));
@@ -161,13 +152,12 @@ public class VectorClockManager {
             deliveredEvents = Collections.emptySet();
         }
 
-        // Check if all causal parent events have been delivered
         for (String parentId : event.getCausalParentEventIds()) {
             boolean found = deliveredEvents.stream()
                     .anyMatch(delivered -> delivered.getEventId().equals(parentId));
 
             if (!found) {
-                return false; // Missing causal dependency
+                return false;
             }
         }
 

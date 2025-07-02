@@ -128,6 +128,7 @@ public class CausalLedger {
 
         rwLock.writeLock().lock();
         try {
+
             List<String> finalParentEventIds = new ArrayList<>();
             if (manualParentEventIds != null && !manualParentEventIds.isEmpty()) {
                 finalParentEventIds.addAll(manualParentEventIds);
@@ -142,6 +143,15 @@ public class CausalLedger {
                 if (!this.containsEvent(parentId)) {
                     throw new UnknownParentException("Parent event " + parentId + " not found in ledger");
                 }
+            }
+
+            List<EventAtom> parentEvents = new ArrayList<>();
+            for (String parentId : finalParentEventIds) {
+                EventAtom parentEvent = this.getEvent(parentId);
+                if (parentEvent == null) {
+                    throw new PersistenceException("FATAL: Parent " + parentId + " found in index but not in RocksDB store.", null);
+                }
+                parentEvents.add(parentEvent);
             }
 
             totalCycleChecks++;
@@ -169,7 +179,7 @@ public class CausalLedger {
                 }
             }
 
-            EventAtom newEvent = vcManager.createEvent(traceId, serviceName, serviceVersion, hostname, eventType, payload, finalParentEventIds);
+            EventAtom newEvent = vcManager.createEvent(traceId, serviceName, serviceVersion, hostname, eventType, payload, parentEvents);
             String newEventId = newEvent.getEventId();
 
             appendEventToLog(newEvent);
@@ -1139,7 +1149,6 @@ public class CausalLedger {
     public List<Integer> getChildrenGraphIds(int parentGraphId) {
         rwLock.readLock().lock();
         try {
-            // Return a copy to prevent modification of the internal list
             return new ArrayList<>(childrenAdjacencyList.getOrDefault(parentGraphId, Collections.emptyList()));
         } finally {
             rwLock.readLock().unlock();
