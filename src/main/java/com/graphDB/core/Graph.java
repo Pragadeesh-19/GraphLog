@@ -1,4 +1,4 @@
-package com.graphlog.core;
+package com.graphDB.core;
 
 import lombok.Getter;
 

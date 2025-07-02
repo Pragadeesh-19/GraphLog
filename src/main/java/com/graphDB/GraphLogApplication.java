@@ -1,6 +1,6 @@
-package com.graphlog;
+package com.graphDB;
 
-import com.graphlog.core.CausalLedger;
+import com.graphDB.core.CausalLedger;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.context.annotation.Bean;

@@ -1,4 +1,4 @@
-package com.graphlog.core;
+package com.graphDB.core;
 
 /**
  * Enum representing the causal relationship between two events in a distributed system.

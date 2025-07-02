@@ -1,4 +1,4 @@
-package com.graphlog.dto;
+package com.graphDB.dto;
 
 import lombok.AllArgsConstructor;
 import lombok.Data;

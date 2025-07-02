@@ -1,6 +1,6 @@
-package com.graphlog.tools;
+package com.graphDB.tools;
 
-import com.graphlog.core.EventAtom;
+import com.graphDB.core.EventAtom;
 
 public class TestDeserialization {
 

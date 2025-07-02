@@ -1,9 +1,9 @@
-package com.graphlog.controller;
+package com.graphDB.controller;
 
-import com.graphlog.core.CausalLedger;
-import com.graphlog.core.CausalRelationship;
-import com.graphlog.core.EventAtom;
-import com.graphlog.dto.*;
+import com.graphDB.core.CausalLedger;
+import com.graphDB.core.CausalRelationship;
+import com.graphDB.core.EventAtom;
+import com.graphDB.dto.*;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;

@@ -1,6 +1,6 @@
-package com.graphlog.tools;
+package com.graphDB.tools;
 
-import com.graphlog.core.CausalLedger;
+import com.graphDB.core.CausalLedger;
 
 import java.io.IOException;
 import java.nio.file.Files;

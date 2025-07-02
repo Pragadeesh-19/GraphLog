@@ -44,7 +44,7 @@
               </filters>
               <transformers>
                 <transformer>
-                  <mainClass>com.graphlog.tools.GraphDBCli</mainClass>
+                  <mainClass>com.graphDB.tools.GraphDBCli</mainClass>
                 </transformer>
                 <transformer>
                   <resource>META-INF/spring.handlers</resource>
@@ -69,7 +69,7 @@
         <artifactId>exec-maven-plugin</artifactId>
         <version>3.1.0</version>
         <configuration>
-          <mainClass>com.graphlog.tools.GraphDBCli</mainClass>
+          <mainClass>com.graphDB.tools.GraphDBCli</mainClass>
         </configuration>
       </plugin>
     </plugins>

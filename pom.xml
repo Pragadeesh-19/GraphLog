@@ -91,7 +91,7 @@
                             </filters>
                             <transformers>
                                 <transformer implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
-                                    <mainClass>com.graphlog.tools.GraphDBCli</mainClass>
+                                    <mainClass>com.graphDB.tools.GraphDBCli</mainClass>
                                 </transformer>
                                 <transformer implementation="org.apache.maven.plugins.shade.resource.AppendingTransformer">
                                     <resource>META-INF/spring.handlers</resource>
@@ -117,7 +117,7 @@
                 <artifactId>exec-maven-plugin</artifactId>
                 <version>3.1.0</version>
                 <configuration>
-                    <mainClass>com.graphlog.tools.GraphDBCli</mainClass>
+                    <mainClass>com.graphDB.tools.GraphDBCli</mainClass>
                 </configuration>
             </plugin>
         </plugins>

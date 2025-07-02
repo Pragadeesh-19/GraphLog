@@ -1,6 +1,6 @@
-package com.graphlog.dto;
+package com.graphDB.dto;
 
-import com.graphlog.core.CausalRelationship;
+import com.graphDB.core.CausalRelationship;
 import lombok.Builder;
 import lombok.Data;
 

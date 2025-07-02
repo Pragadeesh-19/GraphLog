@@ -1,6 +1,6 @@
-package com.graphlog.core;
+package com.graphDB.core;
 
-import com.graphlog.interfaces.StateUpdater;
+import com.graphDB.interfaces.StateUpdater;
 import org.rocksdb.Options;
 import org.rocksdb.RocksDB;
 import org.rocksdb.RocksDBException;

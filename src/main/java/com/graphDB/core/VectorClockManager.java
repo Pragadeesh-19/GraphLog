@@ -1,4 +1,4 @@
-package com.graphlog.core;
+package com.graphDB.core;
 
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
